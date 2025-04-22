@@ -78,7 +78,7 @@ export default function ComposePost() {
               </div>
               <Button
                 type="button"
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary-dark focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-[#145ce8] hover:bg-[#0d4ab8] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#145ce8]"
                 onClick={handleSubmit}
                 disabled={isSubmitting}
               >
