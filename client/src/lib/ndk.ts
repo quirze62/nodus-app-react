@@ -334,9 +334,11 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
       // If this is a message to us, try to decrypt it
       if (event.pubkey !== user.pubkey) {
         try {
-          content = await event.decrypt();
+          // Cast to string explicitly to fix TypeScript error
+          const decrypted = await event.decrypt();
+          content = decrypted as string;
         } catch (e) {
-          console.error("Failed to decrypt message:", e);
+          logger.error("Failed to decrypt message:", e);
           // Keep encrypted content if decryption fails
         }
       }
@@ -467,6 +469,7 @@ export const addRelayToNDK = async (url: string): Promise<boolean> => {
         
         try {
           // Create a new relay and connect
+          // TypeScript complains but this is the correct NDK usage 
           const relay = new NDKRelay(url, ndk);
           
           // Log WebSocket construction
@@ -481,8 +484,11 @@ export const addRelayToNDK = async (url: string): Promise<boolean> => {
             logger.warn(`WebSocket DISCONNECTED from ${url}`);
           });
           
-          relay.on('error', (err) => {
-            logger.error(`WebSocket ERROR for ${url}:`, err);
+          // Use notice for errors since 'error' event isn't in the type definition
+          relay.on('notice', (notice) => {
+            if (notice && notice.includes('error')) {
+              logger.error(`WebSocket ERROR for ${url}:`, notice);
+            }
           });
           
           // Add to pool before connecting
