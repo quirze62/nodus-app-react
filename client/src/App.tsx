@@ -15,6 +15,7 @@ import Profile from "@/pages/Profile";
 import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import { queryClient } from "./lib/queryClient";
+import { DebugPanel } from "@/components/common/DebugPanel";
 
 function MainLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
@@ -74,6 +75,7 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <Router />
+            <DebugPanel />
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>

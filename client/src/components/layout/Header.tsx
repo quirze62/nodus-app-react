@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'wouter';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
+import nodusLogo from '@/assets/nodus-logo.png';
 
 export default function Header() {
   const { theme, setTheme } = useTheme();
@@ -22,7 +23,7 @@ export default function Header() {
             </svg>
           </button>
           <Link href="/" className="flex items-center space-x-2 cursor-pointer">
-            <img src="/src/assets/nodus-logo.png" alt="Nodus" className="h-10" />
+            <img src={nodusLogo} alt="Nodus" className="h-10" />
           </Link>
         </div>
         
