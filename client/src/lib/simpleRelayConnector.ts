@@ -13,6 +13,7 @@ export interface SimpleRelay {
     connect: (() => void)[];
     disconnect: (() => void)[];
     error: ((error: any) => void)[];
+    rawMessage: ((relayUrl: string, data: string) => void)[];
   };
 }
 
@@ -44,7 +45,8 @@ export const createRelay = (url: string): SimpleRelay => {
       message: [],
       connect: [],
       disconnect: [],
-      error: []
+      error: [],
+      rawMessage: []
     }
   };
   
@@ -154,6 +156,15 @@ export const connectToRelay = async (url: string): Promise<boolean> => {
       
       socket.onmessage = (event) => {
         try {
+          // Handle raw message first
+          relay!.eventHandlers.rawMessage.forEach(handler => {
+            try {
+              handler(url, event.data);
+            } catch (err) {
+              logger.error(`Error in raw message handler for ${url}:`, err);
+            }
+          });
+          
           const data = JSON.parse(event.data);
           
           // Check if it's a valid Nostr message
@@ -332,6 +343,81 @@ export const sendRequest = async (
     return true;
   } catch (error) {
     logger.error(`Error sending ${requestType} request to ${url}:`, error);
+    return false;
+  }
+};
+
+// Add raw event handler
+export const addRawEventHandler = (
+  url: string,
+  handler: (relayUrl: string, data: string) => void
+): boolean => {
+  try {
+    const relay = relays.get(url);
+    if (!relay) {
+      logger.warn(`Relay not found: ${url}`);
+      return false;
+    }
+    
+    relay.eventHandlers.rawMessage.push(handler);
+    return true;
+  } catch (error) {
+    logger.error(`Error adding raw event handler for ${url}:`, error);
+    return false;
+  }
+};
+
+// Remove raw event handler
+export const removeRawEventHandler = (
+  url: string,
+  handler: (relayUrl: string, data: string) => void
+): boolean => {
+  try {
+    const relay = relays.get(url);
+    if (!relay) {
+      logger.warn(`Relay not found: ${url}`);
+      return false;
+    }
+    
+    const handlers = relay.eventHandlers.rawMessage;
+    const index = handlers.indexOf(handler);
+    
+    if (index !== -1) {
+      handlers.splice(index, 1);
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    logger.error(`Error removing raw event handler for ${url}:`, error);
+    return false;
+  }
+};
+
+// Send a raw message to a relay
+export const sendRawMessage = async (
+  url: string,
+  message: string
+): Promise<boolean> => {
+  try {
+    logger.debug(`Sending raw message to ${url}:`, message);
+    
+    const relay = relays.get(url);
+    if (!relay) {
+      logger.warn(`Relay not found: ${url}`);
+      return false;
+    }
+    
+    if (!relay.connected || !relay.socket || relay.socket.readyState !== WebSocket.OPEN) {
+      logger.warn(`Not connected to relay: ${url}`);
+      return false;
+    }
+    
+    // Send the raw message
+    relay.socket.send(message);
+    return true;
+  } catch (error) {
+    logger.error(`Error sending raw message to ${url}:`, error);
     return false;
   }
 };
