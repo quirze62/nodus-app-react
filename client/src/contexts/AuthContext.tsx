@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/db';
 import { importKeyFromNsec, NostrUser } from '@/lib/nostr';
-import { loginWithPrivateKey, generateNewUser } from '@/lib/ndk';
+import { loginWithPrivateKey as ndkLogin, generateNewUser as ndkGenerateUser } from '@/lib/ndk';
+import { loginWithPrivateKey as hybridLogin, generateNewUser as hybridGenerateUser } from '@/lib/hybridNostr';
 
 interface AuthContextType {
   user: NostrUser | null;
@@ -52,7 +53,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadUser();
   }, [toast]);
 
-  // Login with nsec or private key using NDK
+  // Login with nsec or private key using hybrid implementation
   const login = async (nsecOrPrivKey: string): Promise<boolean> => {
     try {
       setIsLoading(true);
@@ -72,8 +73,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         privateKey = importedUser.privateKey;
       }
       
-      // Use NDK to login with private key
-      const loggedInUser = await loginWithPrivateKey(privateKey);
+      // Use hybrid implementation to login with private key
+      const loggedInUser = await hybridLogin(privateKey);
       
       if (!loggedInUser) {
         toast({
@@ -106,13 +107,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Generate new keys using NDK
+  // Generate new keys using hybrid implementation
   const generateNewKeys = async (): Promise<NostrUser> => {
     try {
       setIsLoading(true);
       
-      // Generate new key pair using NDK
-      const newUser = await generateNewUser();
+      // Generate new key pair using hybrid implementation
+      const newUser = await hybridGenerateUser();
       
       if (!newUser) {
         throw new Error('Failed to generate new user');

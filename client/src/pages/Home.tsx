@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNostr } from '@/hooks/useNostr';
+import { useHybridNostr } from '@/hooks/useHybridNostr';
 import { useOffline } from '@/hooks/useOffline';
 import ComposePost from '@/components/feed/ComposePost';
 import OfflineIndicator from '@/components/feed/OfflineIndicator';
@@ -11,7 +12,9 @@ import { NostrEvent } from '@/lib/nostr';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function Home() {
-  const { loadNotes, isLoading, error } = useNostr();
+  // Use the hybrid implementation that uses our custom WebSocket implementation
+  // but still benefits from NDK's data management capabilities
+  const { loadNotes, isLoading, error } = useHybridNostr();
   const { isOffline } = useOffline();
   const [notes, setNotes] = useState<NostrEvent[]>([]);
   
