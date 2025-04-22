@@ -94,7 +94,7 @@ export default function Settings() {
       <h1 className="text-2xl font-bold">Settings</h1>
       
       <Tabs defaultValue="appearance">
-        <TabsList className="grid w-full grid-cols-4 mb-4">
+        <TabsList className="grid w-full grid-cols-5 mb-4">
           <TabsTrigger value="appearance">
             <PaintBucket className="h-4 w-4 mr-2" />
             Appearance
@@ -102,6 +102,10 @@ export default function Settings() {
           <TabsTrigger value="privacy">
             <Shield className="h-4 w-4 mr-2" />
             Privacy
+          </TabsTrigger>
+          <TabsTrigger value="network">
+            <Router className="h-4 w-4 mr-2" />
+            Network
           </TabsTrigger>
           <TabsTrigger value="data">
             <Database className="h-4 w-4 mr-2" />
@@ -219,6 +223,10 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+        
+        <TabsContent value="network">
+          <RelaySettings />
         </TabsContent>
         
         <TabsContent value="data">
