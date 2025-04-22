@@ -2,6 +2,7 @@ import NDK, { NDKEvent, NDKNip07Signer, NDKPrivateKeySigner, NDKUser, NDKFilter,
 import { db } from './db';
 import { NostrEvent, NostrProfile, NostrUser, EventKind } from './nostr';
 import { getRelayManager, DEFAULT_RELAYS } from './relayManager';
+import logger from './logger';
 
 // NDK singleton
 let ndkInstance: NDK | null = null;
@@ -444,55 +445,110 @@ export const getRelayStatus = async (): Promise<{url: string, connected: boolean
  */
 export const addRelayToNDK = async (url: string): Promise<boolean> => {
   try {
+    logger.info(`Attempting to add relay: ${url}`);
     const ndk = await getNDK();
     
-    // Check if already exists in explicit relays
+    // Check if the URL is valid
+    if (!url.startsWith('wss://') && !url.startsWith('ws://')) {
+      logger.error(`Invalid relay URL: ${url}. Must start with wss:// or ws://`);
+      return false;
+    }
+    
+    // Add to explicit relays
     if (!ndk.explicitRelayUrls.includes(url)) {
       ndk.explicitRelayUrls.push(url);
     }
+    logger.debug(`Updated explicit relay URLs`, ndk.explicitRelayUrls);
     
-    // Try to add the relay to the NDK instance
     try {
       // Simple direct approach - add to pool and connect
       if (!ndk.pool.relays.has(url)) {
-        console.log(`Adding new relay to pool: ${url}`);
-        
-        // Create a new relay and connect
-        const relay = new NDKRelay(url, ndk);
-        ndk.pool.relays.set(url, relay);
+        logger.info(`Adding new relay to pool: ${url}`);
         
         try {
-          await relay.connect();
-          console.log(`Connected to relay: ${url}`);
+          // Create a new relay and connect
+          const relay = new NDKRelay(url, ndk);
+          
+          // Log WebSocket construction
+          logger.debug(`Creating WebSocket for ${url}...`);
+          
+          // Register event listeners for detailed debugging
+          relay.on('connect', () => {
+            logger.info(`WebSocket CONNECTED to ${url}`);
+          });
+          
+          relay.on('disconnect', () => {
+            logger.warn(`WebSocket DISCONNECTED from ${url}`);
+          });
+          
+          relay.on('error', (err) => {
+            logger.error(`WebSocket ERROR for ${url}:`, err);
+          });
+          
+          // Add to pool before connecting
+          ndk.pool.relays.set(url, relay);
+          
+          // Attempt connection with timeout
+          const connectPromise = relay.connect();
+          
+          // Add a timeout for connection attempts
+          const timeoutPromise = new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error(`Connection timeout for ${url}`)), 10000);
+          });
+          
+          // Race the connection against a timeout
+          await Promise.race([connectPromise, timeoutPromise]);
+          logger.info(`Successfully connected to relay: ${url}`);
         } catch (e) {
-          console.error(`Failed to connect to relay ${url}:`, e);
+          logger.error(`Failed to connect to relay ${url}:`, e);
+          
+          // Additional WebSocket environment diagnostics
+          if (typeof WebSocket === 'undefined') {
+            logger.error('WebSocket is undefined in this environment!');
+          } else {
+            logger.debug('WebSocket implementation available:', WebSocket.name || 'Native WebSocket');
+          }
+          
+          // Additional network diagnostics
+          try {
+            logger.debug(`Performing fetch test against ${url.replace('wss://', 'https://').replace('ws://', 'http://')}`);
+            // We can't use fetch directly on the WebSocket URL, so we'll try the HTTP equivalent
+            const fetchUrl = url.replace('wss://', 'https://').replace('ws://', 'http://');
+            const fetchTest = await fetch(fetchUrl, { method: 'HEAD' }).catch(e => ({ error: e }));
+            logger.debug('Fetch test result:', fetchTest);
+          } catch (fetchError) {
+            logger.error('Fetch test failed:', fetchError);
+          }
         }
       } else {
         // Already exists in pool
-        console.log(`Relay already exists in pool: ${url}`);
+        logger.info(`Relay already exists in pool: ${url}`);
         
         // Try to reconnect if not connected
         const existingRelay = ndk.pool.relays.get(url);
         if (existingRelay && !existingRelay.connected) {
           try {
+            logger.debug(`Attempting to reconnect to existing relay: ${url}`);
             await existingRelay.connect();
-            console.log(`Reconnected to existing relay: ${url}`);
+            logger.info(`Reconnected to existing relay: ${url}`);
           } catch (e) {
-            console.error(`Failed to reconnect to existing relay ${url}:`, e);
+            logger.error(`Failed to reconnect to existing relay ${url}:`, e);
           }
         }
       }
       
       // Get the relay from the pool after connection attempts
       const addedRelay = ndk.pool.relays.get(url);
+      const isConnected = addedRelay?.connected || false;
       
+      logger.info(`Relay ${url} connection status: ${isConnected ? 'CONNECTED' : 'DISCONNECTED'}`);
       return addedRelay ? true : false;
     } catch (error) {
-      console.error(`Failed to add relay ${url}:`, error);
+      logger.error(`Failed to add relay ${url}:`, error);
       return false;
     }
   } catch (error) {
-    console.error("Error adding relay to NDK:", error);
+    logger.error("Error adding relay to NDK:", error);
     return false;
   }
 };
