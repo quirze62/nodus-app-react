@@ -2,13 +2,9 @@ import NDK, { NDKRelay, NDKRelayStatus } from '@nostr-dev-kit/ndk';
 import { db } from './db';
 import { getNDK, addRelayToNDK, removeRelayFromNDK } from './ndk';
 
-// Default Nostr relays for the application
+// Default relay for Nodus - focus on the mynodus relay for our closed community
 export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://relay.nostr.band',
-  'wss://nos.lol',
-  'wss://relay.current.fyi',
-  'wss://nostr.wine'
+  'wss://relay.mynodus.org'
 ];
 
 /**

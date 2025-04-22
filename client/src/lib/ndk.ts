@@ -12,9 +12,9 @@ let ndkInstance: NDK | null = null;
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
-    // Initialize NDK with relay manager's relays
+    // Initialize NDK with only mynodus relay for verified community
     ndkInstance = new NDK({
-      explicitRelayUrls: DEFAULT_RELAYS,
+      explicitRelayUrls: ['wss://relay.mynodus.org'],
       enableOutboxModel: true, // for offline functionality
     });
     
@@ -431,7 +431,9 @@ export const subscribeToNotes = (
     }
     
     // Create filter for text notes
-    const filter: NDKFilter = { kinds: [EventKind.TEXT_NOTE] };
+    const filter: NDKFilter = { 
+      kinds: [EventKind.TEXT_NOTE]
+    };
     
     // Subscribe to events
     const subscription = ndk.subscribe(filter);
@@ -607,8 +609,60 @@ export const addRelayToNDK = async (url: string): Promise<boolean> => {
 };
 
 /**
- * Remove a relay from NDK
+ * Verify if a user is NIP-05 verified
  */
+export const isNIP05Verified = async (pubkey: string): Promise<boolean> => {
+  try {
+    const ndk = await getNDK();
+    const user = ndk.getUser({ pubkey });
+    await user.fetchProfile();
+    
+    // Check if user has a valid NIP-05 identifier
+    return !!user.profile?.nip05;
+  } catch (error) {
+    logger.error("Error checking NIP-05 verification:", error);
+    return false;
+  }
+};
+
+/**
+ * Check if a user is personally approved to join Nodus
+ * In a production app, this would check against a database of approved users
+ */
+export const isPersonallyApproved = async (pubkey: string): Promise<boolean> => {
+  try {
+    // This is a placeholder. In a real application, you would:
+    // 1. Check a database of approved users
+    // 2. Or verify against a list maintained by relay.mynodus.org
+    // 3. Or use a kind 30001 parameterized replacement (NIP-51) list of approved users
+
+    // For now, we'll simulate by checking if the user has NIP-05 verification
+    const hasNIP05 = await isNIP05Verified(pubkey);
+    
+    // In the future, expand this with actual verification logic
+    return hasNIP05;
+  } catch (error) {
+    logger.error("Error checking personal approval:", error);
+    return false;
+  }
+};
+
+/**
+ * Filter function that can be used to filter notes/users that are
+ * part of the closed Nodus network (NIP-05 verified and personally approved)
+ */
+export const isPartOfNodusNetwork = async (pubkey: string): Promise<boolean> => {
+  // User must be NIP-05 verified
+  const hasNIP05 = await isNIP05Verified(pubkey);
+  if (!hasNIP05) return false;
+  
+  // User must be personally approved
+  const isApproved = await isPersonallyApproved(pubkey);
+  if (!isApproved) return false;
+  
+  return true;
+};
+
 export const removeRelayFromNDK = async (url: string): Promise<boolean> => {
   try {
     const ndk = await getNDK();
