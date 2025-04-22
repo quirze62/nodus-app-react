@@ -1,6 +1,6 @@
 import NDK, { NDKRelay, NDKRelayStatus } from '@nostr-dev-kit/ndk';
 import { db } from './db';
-import { getNDK } from './ndk';
+import { getNDK, addRelayToNDK, removeRelayFromNDK } from './ndk';
 
 // Default Nostr relays for the application
 export const DEFAULT_RELAYS = [
@@ -93,7 +93,7 @@ export class RelayManager {
     // Add to managed relays
     this.relays.set(url, {
       url,
-      status: 'disconnected',
+      status: 'connecting',
       read,
       write
     });
@@ -101,18 +101,36 @@ export class RelayManager {
     // Save to storage
     this.saveRelays();
     
-    // If NDK is initialized, connect to the relay
-    if (this.ndk && (read || write)) {
-      try {
-        await this.connectToRelay(url);
-        return true;
-      } catch (error) {
-        console.error(`Failed to connect to relay ${url}:`, error);
-        return false;
+    try {
+      // Use our utility function to add relay to NDK
+      const result = await addRelayToNDK(url);
+      
+      // Update relay status after connection attempt
+      const relay = this.relays.get(url);
+      if (relay) {
+        const ndkRelay = this.ndk?.pool.relays.get(url);
+        if (ndkRelay && ndkRelay.connected) {
+          relay.status = 'connected';
+          relay.lastConnected = new Date();
+        } else {
+          relay.status = result ? 'connecting' : 'error';
+        }
+        this.relays.set(url, relay);
       }
+      
+      return result;
+    } catch (error) {
+      console.error(`Failed to add relay ${url}:`, error);
+      
+      // Update status to error
+      const relay = this.relays.get(url);
+      if (relay) {
+        relay.status = 'error';
+        this.relays.set(url, relay);
+      }
+      
+      return false;
     }
-    
-    return true;
   }
   
   /**
@@ -124,22 +142,21 @@ export class RelayManager {
       return false;
     }
     
-    // Disconnect from the relay if NDK is initialized
-    if (this.ndk) {
-      try {
-        await this.disconnectFromRelay(url);
-      } catch (error) {
-        console.error(`Failed to disconnect from relay ${url}:`, error);
-      }
+    try {
+      // Use our utility function to remove relay from NDK
+      await removeRelayFromNDK(url);
+      
+      // Remove from managed relays
+      this.relays.delete(url);
+      
+      // Save to storage
+      this.saveRelays();
+      
+      return true;
+    } catch (error) {
+      console.error(`Failed to remove relay ${url}:`, error);
+      return false;
     }
-    
-    // Remove from managed relays
-    this.relays.delete(url);
-    
-    // Save to storage
-    this.saveRelays();
-    
-    return true;
   }
   
   /**

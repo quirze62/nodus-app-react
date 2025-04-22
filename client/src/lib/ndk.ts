@@ -438,3 +438,102 @@ export const getRelayStatus = async (): Promise<{url: string, connected: boolean
     return [];
   }
 };
+
+/**
+ * Add a relay to NDK
+ */
+export const addRelayToNDK = async (url: string): Promise<boolean> => {
+  try {
+    const ndk = await getNDK();
+    
+    // Check if already exists in explicit relays
+    if (!ndk.explicitRelayUrls.includes(url)) {
+      ndk.explicitRelayUrls.push(url);
+    }
+    
+    // Try to add the relay to the NDK instance
+    try {
+      // Here we try both approaches:
+      // 1. Use the pool's addRelay method if available
+      if (typeof ndk.pool.addRelay === 'function') {
+        // Add the relay to the pool
+        try {
+          const relay = ndk.pool.addRelay(url);
+          if (relay) {
+            console.log(`Successfully added relay to pool: ${url}`);
+            
+            // Try to connect
+            try {
+              await relay.connect();
+              console.log(`Connected to relay: ${url}`);
+            } catch (e) {
+              console.error(`Failed to connect to relay ${url}:`, e);
+            }
+          }
+        } catch (err) {
+          console.error(`Error adding relay to pool: ${url}`, err);
+        }
+      } else {
+        // Add directly to the pool
+        const relay = new NDKRelay(url);
+        ndk.pool.relays.set(url, relay);
+        
+        // Try to connect
+        try {
+          await relay.connect();
+          console.log(`Connected to relay: ${url}`);
+        } catch (e) {
+          console.error(`Failed to connect to relay ${url}:`, e);
+        }
+      }
+      
+      // Now try to reconnect the NDK instance to pick up the new relay
+      await ndk.connect();
+      
+      // Get the relay
+      const addedRelay = ndk.pool.relays.get(url);
+      
+      return addedRelay ? true : false;
+    } catch (error) {
+      console.error(`Failed to add relay ${url}:`, error);
+      return false;
+    }
+  } catch (error) {
+    console.error("Error adding relay to NDK:", error);
+    return false;
+  }
+};
+
+/**
+ * Remove a relay from NDK
+ */
+export const removeRelayFromNDK = async (url: string): Promise<boolean> => {
+  try {
+    const ndk = await getNDK();
+    
+    // Remove from explicit relays
+    ndk.explicitRelayUrls = ndk.explicitRelayUrls.filter(u => u !== url);
+    
+    // Get the relay from pool
+    const relay = ndk.pool.relays.get(url);
+    
+    if (relay) {
+      // Try to disconnect
+      if (relay.connected) {
+        try {
+          await relay.disconnect();
+        } catch (e) {
+          console.error(`Error disconnecting from relay ${url}:`, e);
+        }
+      }
+      
+      // Remove from pool
+      ndk.pool.relays.delete(url);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("Error removing relay from NDK:", error);
+    return false;
+  }
+};
