@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Trash2, Plus, Wifi, WifiOff, AlertTriangle } from "lucide-react";
 import { DEFAULT_RELAYS, getRelayManager, ManagedRelay } from '@/lib/relayManager';
 import { useToast } from "@/hooks/use-toast";
+import { ConnectionStatus } from '../common/ConnectionStatus';
 
 export default function RelaySettings() {
   const [relays, setRelays] = useState<ManagedRelay[]>([]);
@@ -207,6 +208,9 @@ export default function RelaySettings() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Overall connection status */}
+        <ConnectionStatus />
+        
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
             <Switch 

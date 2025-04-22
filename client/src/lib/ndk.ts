@@ -456,147 +456,30 @@ export const addRelayToNDK = async (url: string): Promise<boolean> => {
       // Simple direct approach - add to pool and connect
       if (!ndk.pool.relays.has(url)) {
         console.log(`Adding new relay to pool: ${url}`);
-                
-        // Manually add to explicit relay URLs
-        if (!ndk.explicitRelayUrls.includes(url)) {
-          ndk.explicitRelayUrls.push(url);
-        }
         
-        // Create a simulated relay object
-        const simRelay = {
-          url,
-          connected: false,
-          connecting: false,
-          status: 1, // NDKRelayStatus.CONNECTING
-          eventCallbacks: new Map<string, Array<() => void>>(), 
-          
-          on: function(event: string, callback: () => void) {
-            if (!this.eventCallbacks.has(event)) {
-              this.eventCallbacks.set(event, []);
-            }
-            this.eventCallbacks.get(event)?.push(callback);
-            return this;
-          },
-          
-          // Simulate trigger of an event
-          emit: function(event: string) {
-            const callbacks = this.eventCallbacks.get(event);
-            if (callbacks) {
-              callbacks.forEach(callback => callback());
-            }
-          },
-          
-          connect: async function() {
-            try {
-              console.log(`Simulating connection to relay: ${url}`);
-              this.connecting = true;
-              
-              // Simulate a successful connection after a delay
-              return new Promise<void>((resolve) => {
-                setTimeout(() => {
-                  this.connected = true;
-                  this.connecting = false;
-                  this.status = 3; // NDKRelayStatus.CONNECTED
-                  console.log(`Connected to relay: ${url}`);
-                  
-                  // Emit the connect event to trigger all registered callbacks
-                  this.emit('connect');
-                  resolve();
-                }, 500);
-              });
-            } catch (error) {
-              console.error(`Error connecting to relay ${url}:`, error);
-              return Promise.reject(error);
-            }
-          },
-          
-          disconnect: async function() {
-            console.log(`Disconnecting from relay: ${url}`);
-            this.connected = false;
-            this.status = 0; // NDKRelayStatus.DISCONNECTED
-            
-            // Emit the disconnect event
-            this.emit('disconnect');
-            return Promise.resolve();
-          }
-        };
-                
-        // Add to the pool
-        ndk.pool.relays.set(url, simRelay as any);
+        // Create a new relay and connect
+        const relay = new NDKRelay(url, ndk);
+        ndk.pool.relays.set(url, relay);
         
-        // Try to simulate connection
         try {
-          await simRelay.connect();
+          await relay.connect();
+          console.log(`Connected to relay: ${url}`);
         } catch (e) {
           console.error(`Failed to connect to relay ${url}:`, e);
         }
       } else {
-        // Already exists in pool - replace it with a simulation for consistency
-        console.log(`Replacing existing relay in pool: ${url}`);
+        // Already exists in pool
+        console.log(`Relay already exists in pool: ${url}`);
         
-        // Create a new simulated relay
-        const newSimRelay = {
-          url,
-          connected: false,
-          connecting: false,
-          status: 1, // NDKRelayStatus.CONNECTING
-          eventCallbacks: new Map<string, Array<() => void>>(),
-          
-          on: function(event: string, callback: () => void) {
-            if (!this.eventCallbacks.has(event)) {
-              this.eventCallbacks.set(event, []);
-            }
-            this.eventCallbacks.get(event)?.push(callback);
-            return this;
-          },
-          
-          emit: function(event: string) {
-            const callbacks = this.eventCallbacks.get(event);
-            if (callbacks) {
-              callbacks.forEach(callback => callback());
-            }
-          },
-          
-          connect: async function() {
-            try {
-              console.log(`Simulating connection to existing relay: ${url}`);
-              this.connecting = true;
-              
-              return new Promise<void>((resolve) => {
-                setTimeout(() => {
-                  this.connected = true;
-                  this.connecting = false;
-                  this.status = 3; // NDKRelayStatus.CONNECTED
-                  console.log(`Connected to existing relay: ${url}`);
-                  
-                  this.emit('connect');
-                  resolve();
-                }, 500);
-              });
-            } catch (error) {
-              console.error(`Error connecting to existing relay ${url}:`, error);
-              return Promise.reject(error);
-            }
-          },
-          
-          disconnect: async function() {
-            console.log(`Disconnecting from existing relay: ${url}`);
-            this.connected = false;
-            this.status = 0; // NDKRelayStatus.DISCONNECTED
-            
-            this.emit('disconnect');
-            return Promise.resolve();
+        // Try to reconnect if not connected
+        const existingRelay = ndk.pool.relays.get(url);
+        if (existingRelay && !existingRelay.connected) {
+          try {
+            await existingRelay.connect();
+            console.log(`Reconnected to existing relay: ${url}`);
+          } catch (e) {
+            console.error(`Failed to reconnect to existing relay ${url}:`, e);
           }
-        };
-        
-        // Replace old relay in pool
-        ndk.pool.relays.set(url, newSimRelay as any);
-        
-        // Connect the new simulation
-        try {
-          await newSimRelay.connect();
-        } catch (e) {
-          console.error(`Failed to connect replacement relay ${url}:`, e);
         }
       }
       
