@@ -384,28 +384,7 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
     
     if (relays.length === 0) {
       logger.warn('No connected relays');
-      
-      // Return some sample notes for testing if no relays are connected
-      return [
-        {
-          id: 'sample1',
-          pubkey: '000000000000000000000000000000000000000000000000000000000000000000',
-          created_at: Math.floor(Date.now() / 1000) - 300,
-          kind: EventKind.TEXT_NOTE,
-          tags: [],
-          content: 'This is a sample note to show when no relays are connected. The app appears to be successfully connecting to relays but not receiving notes yet.',
-          sig: 'sample_signature'
-        },
-        {
-          id: 'sample2',
-          pubkey: '000000000000000000000000000000000000000000000000000000000000000000',
-          created_at: Math.floor(Date.now() / 1000) - 600,
-          kind: EventKind.TEXT_NOTE,
-          tags: [],
-          content: 'The direct WebSocket implementation is working for relay connections. We just need to get note fetching working properly.',
-          sig: 'sample_signature'
-        }
-      ];
+      return [];
     }
     
     const notes: NostrEvent[] = [];
@@ -493,18 +472,7 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
           simpleRelay.removeRawEventHandler(relay.url, handleEvent);
         }
         
-        if (notes.length === 0) {
-          // If we still don't have any notes, add sample notes
-          notes.push({
-            id: 'timeout_sample',
-            pubkey: '000000000000000000000000000000000000000000000000000000000000000000',
-            created_at: Math.floor(Date.now() / 1000),
-            kind: EventKind.TEXT_NOTE,
-            tags: [],
-            content: 'We reached the timeout waiting for notes. The app is connecting to relays successfully but not getting notes yet.',
-            sig: 'sample_signature'
-          });
-        }
+        // No need to add fake sample notes - we should only use authentic data
         
         logger.info(`Timeout reached, resolving with ${notes.length} notes`);
         resolve(notes);
@@ -513,18 +481,8 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
   } catch (error) {
     logger.error('Error fetching notes:', error);
     
-    // Return sample notes in case of error
-    return [
-      {
-        id: 'error_sample',
-        pubkey: '000000000000000000000000000000000000000000000000000000000000000000',
-        created_at: Math.floor(Date.now() / 1000),
-        kind: EventKind.TEXT_NOTE,
-        tags: [],
-        content: `Error fetching notes: ${error instanceof Error ? error.message : 'Unknown error'}. The app is connecting to relays but encountering issues with note fetching.`,
-        sig: 'sample_signature'
-      }
-    ];
+    // Only use authentic data - return empty array in case of error
+    return [];
   }
 };
 
