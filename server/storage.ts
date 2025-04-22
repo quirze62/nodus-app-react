@@ -1,4 +1,6 @@
 import { users, notes, messages, follows, type User, type InsertUser, type Note, type InsertNote, type Message, type InsertMessage, type Follow, type InsertFollow } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface IStorage {
   // User methods
@@ -168,4 +170,134 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export class DatabaseStorage implements IStorage {
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user || undefined;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user || undefined;
+  }
+  
+  async getUserByPublicKey(publicKey: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.publicKey, publicKey));
+    return user || undefined;
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
+    return user;
+  }
+  
+  async updateUser(id: number, updateData: Partial<InsertUser>): Promise<User | undefined> {
+    const [updatedUser] = await db
+      .update(users)
+      .set(updateData)
+      .where(eq(users.id, id))
+      .returning();
+    return updatedUser;
+  }
+  
+  async getNotes(limit: number = 20, offset: number = 0): Promise<Note[]> {
+    return db
+      .select()
+      .from(notes)
+      .limit(limit)
+      .offset(offset)
+      .orderBy(notes.createdAt, { direction: "desc" });
+  }
+  
+  async getNotesByUser(userId: number): Promise<Note[]> {
+    return db
+      .select()
+      .from(notes)
+      .where(eq(notes.userId, userId))
+      .orderBy(notes.createdAt, { direction: "desc" });
+  }
+  
+  async createNote(insertNote: InsertNote): Promise<Note> {
+    const [note] = await db
+      .insert(notes)
+      .values(insertNote)
+      .returning();
+    return note;
+  }
+  
+  async getMessages(userId1: number, userId2: number): Promise<Message[]> {
+    return db
+      .select()
+      .from(messages)
+      .where(
+        // Get messages where userId1 is sender and userId2 is receiver OR vice versa
+        db.or(
+          db.and(
+            eq(messages.senderId, userId1),
+            eq(messages.receiverId, userId2)
+          ),
+          db.and(
+            eq(messages.senderId, userId2),
+            eq(messages.receiverId, userId1)
+          )
+        )
+      )
+      .orderBy(messages.createdAt);
+  }
+  
+  async createMessage(insertMessage: InsertMessage): Promise<Message> {
+    const [message] = await db
+      .insert(messages)
+      .values(insertMessage)
+      .returning();
+    return message;
+  }
+  
+  async markMessageAsRead(id: number): Promise<Message | undefined> {
+    const now = new Date();
+    const [message] = await db
+      .update(messages)
+      .set({ readAt: now })
+      .where(eq(messages.id, id))
+      .returning();
+    return message;
+  }
+  
+  async getFollowers(userId: number): Promise<Follow[]> {
+    return db
+      .select()
+      .from(follows)
+      .where(eq(follows.followingId, userId));
+  }
+  
+  async getFollowing(userId: number): Promise<Follow[]> {
+    return db
+      .select()
+      .from(follows)
+      .where(eq(follows.followerId, userId));
+  }
+  
+  async createFollow(insertFollow: InsertFollow): Promise<Follow> {
+    const [follow] = await db
+      .insert(follows)
+      .values(insertFollow)
+      .returning();
+    return follow;
+  }
+  
+  async deleteFollow(followerId: number, followingId: number): Promise<void> {
+    await db
+      .delete(follows)
+      .where(
+        db.and(
+          eq(follows.followerId, followerId),
+          eq(follows.followingId, followingId)
+        )
+      );
+  }
+}
+
+export const storage = new DatabaseStorage();
