@@ -204,12 +204,31 @@ export class RelayManager {
       
       // If relay doesn't exist in NDK pool, create a new connection
       if (!ndkRelay) {
-        // Create new relay connection
-        ndkRelay = new NDKRelay(url);
-        // Add to pool
-        this.ndk.pool.relays.set(url, ndkRelay);
-        // Connect to relay
-        await ndkRelay.connect();
+        try {
+          // Add the URL to NDK's explicit relays list then reconnect
+          if (!this.ndk.explicitRelayUrls.includes(url)) {
+            this.ndk.explicitRelayUrls.push(url);
+          }
+          
+          // Try to connect to the relay using NDK's connect method
+          try {
+            // Reconnect with explicit relays
+            await this.ndk.connect();
+          } catch (error) {
+            console.error(`Error connecting to relay ${url}:`, error);
+          }
+          
+          // Get the relay from pool after connection attempt
+          ndkRelay = this.ndk.pool.relays.get(url);
+          
+          if (!ndkRelay) {
+            console.error(`Failed to add relay ${url} to pool`);
+            return false;
+          }
+        } catch (error) {
+          console.error(`Error creating relay ${url}:`, error);
+          return false;
+        }
       }
       
       // Set up event listeners
@@ -235,13 +254,14 @@ export class RelayManager {
         }
       });
       
-      ndkRelay.on('error', () => {
+      // Track connection failures via internal tracking
+      setTimeout(() => {
         const managedRelay = this.relays.get(url);
-        if (managedRelay) {
+        if (managedRelay && managedRelay.status === 'connecting') {
           managedRelay.status = 'error';
           this.relays.set(url, managedRelay);
         }
-      });
+      }, 10000);
       
       return true;
     } catch (error) {
