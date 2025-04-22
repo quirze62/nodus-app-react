@@ -215,74 +215,68 @@ export class RelayManager {
       relay.status = 'connecting';
       this.relays.set(url, relay);
       
-      // Get or add relay from NDK
-      const ndkRelays = this.ndk.pool.relays;
-      let ndkRelay = ndkRelays.get(url);
+      // Use the utility function to add/connect relay
+      const success = await addRelayToNDK(url);
       
-      // If relay doesn't exist in NDK pool, create a new connection
-      if (!ndkRelay) {
-        try {
-          // Add the URL to NDK's explicit relays list then reconnect
-          if (!this.ndk.explicitRelayUrls.includes(url)) {
-            this.ndk.explicitRelayUrls.push(url);
+      if (success) {
+        // Get the relay from NDK pool
+        const ndkRelay = this.ndk.pool.relays.get(url);
+        
+        if (ndkRelay) {
+          // Set up event listeners
+          ndkRelay.on('connect', () => {
+            const managedRelay = this.relays.get(url);
+            if (managedRelay) {
+              managedRelay.status = 'connected';
+              managedRelay.lastConnected = new Date();
+              this.relays.set(url, managedRelay);
+              console.log(`Connected to relay: ${url}`);
+            }
+          });
+          
+          ndkRelay.on('disconnect', () => {
+            const managedRelay = this.relays.get(url);
+            if (managedRelay) {
+              managedRelay.status = 'disconnected';
+              this.relays.set(url, managedRelay);
+              console.log(`Disconnected from relay: ${url}`);
+              
+              // Auto reconnect if enabled
+              if (this.autoReconnect && (managedRelay.read || managedRelay.write)) {
+                setTimeout(() => this.connectToRelay(url), 5000);
+              }
+            }
+          });
+          
+          // Update relay status
+          if (ndkRelay.connected) {
+            relay.status = 'connected';
+            relay.lastConnected = new Date();
+          } else {
+            // Track connection failures via internal tracking
+            setTimeout(() => {
+              const managedRelay = this.relays.get(url);
+              if (managedRelay && managedRelay.status === 'connecting') {
+                managedRelay.status = 'error';
+                this.relays.set(url, managedRelay);
+                console.log(`Connection timed out for relay: ${url}`);
+              }
+            }, 10000);
           }
           
-          // Try to connect to the relay using NDK's connect method
-          try {
-            // Reconnect with explicit relays
-            await this.ndk.connect();
-          } catch (error) {
-            console.error(`Error connecting to relay ${url}:`, error);
-          }
+          this.relays.set(url, relay);
           
-          // Get the relay from pool after connection attempt
-          ndkRelay = this.ndk.pool.relays.get(url);
-          
-          if (!ndkRelay) {
-            console.error(`Failed to add relay ${url} to pool`);
-            return false;
-          }
-        } catch (error) {
-          console.error(`Error creating relay ${url}:`, error);
-          return false;
+          return true;
         }
       }
       
-      // Set up event listeners
-      ndkRelay.on('connect', () => {
-        const managedRelay = this.relays.get(url);
-        if (managedRelay) {
-          managedRelay.status = 'connected';
-          managedRelay.lastConnected = new Date();
-          this.relays.set(url, managedRelay);
-        }
-      });
-      
-      ndkRelay.on('disconnect', () => {
-        const managedRelay = this.relays.get(url);
-        if (managedRelay) {
-          managedRelay.status = 'disconnected';
-          this.relays.set(url, managedRelay);
-          
-          // Auto reconnect if enabled
-          if (this.autoReconnect && (managedRelay.read || managedRelay.write)) {
-            setTimeout(() => this.connectToRelay(url), 5000);
-          }
-        }
-      });
-      
-      // Track connection failures via internal tracking
-      setTimeout(() => {
-        const managedRelay = this.relays.get(url);
-        if (managedRelay && managedRelay.status === 'connecting') {
-          managedRelay.status = 'error';
-          this.relays.set(url, managedRelay);
-        }
-      }, 10000);
-      
-      return true;
+      // If we get here, the connection was not successful
+      console.error(`Failed to connect to relay ${url}`);
+      relay.status = 'error';
+      this.relays.set(url, relay);
+      return false;
     } catch (error) {
-      console.error(`Failed to connect to relay ${url}:`, error);
+      console.error(`Error connecting to relay ${url}:`, error);
       
       const relay = this.relays.get(url);
       if (relay) {
@@ -310,16 +304,10 @@ export class RelayManager {
         this.relays.set(url, relay);
       }
       
-      // Get relay from NDK pool
-      const ndkRelay = this.ndk.pool.relays.get(url);
-      if (ndkRelay) {
-        // Disconnect the relay
-        await ndkRelay.disconnect();
-        // Remove from pool
-        this.ndk.pool.relays.delete(url);
-      }
+      // Use the utility function to remove the relay
+      const result = await removeRelayFromNDK(url);
       
-      return true;
+      return result;
     } catch (error) {
       console.error(`Failed to disconnect from relay ${url}:`, error);
       return false;

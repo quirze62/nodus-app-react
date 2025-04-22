@@ -453,44 +453,40 @@ export const addRelayToNDK = async (url: string): Promise<boolean> => {
     
     // Try to add the relay to the NDK instance
     try {
-      // Here we try both approaches:
-      // 1. Use the pool's addRelay method if available
-      if (typeof ndk.pool.addRelay === 'function') {
-        // Add the relay to the pool
+      // Simple direct approach - add to pool and connect
+      if (!ndk.pool.relays.has(url)) {
+        console.log(`Adding new relay to pool: ${url}`);
+        
+        // Create a websocket connection first
+        const ws = new WebSocket(url);
+        
+        // Manually add to explicit relay URLs
+        if (!ndk.explicitRelayUrls.includes(url)) {
+          ndk.explicitRelayUrls.push(url);
+        }
+        
+        // Try connecting with ndk.connect() to pick up the new URL
         try {
-          const relay = ndk.pool.addRelay(url);
-          if (relay) {
-            console.log(`Successfully added relay to pool: ${url}`);
-            
-            // Try to connect
-            try {
-              await relay.connect();
-              console.log(`Connected to relay: ${url}`);
-            } catch (e) {
-              console.error(`Failed to connect to relay ${url}:`, e);
-            }
-          }
-        } catch (err) {
-          console.error(`Error adding relay to pool: ${url}`, err);
+          await ndk.connect();
+          console.log(`Added relay to explicit URLs: ${url}`);
+        } catch (e) {
+          console.error(`Failed to connect NDK with new relay ${url}:`, e);
         }
       } else {
-        // Add directly to the pool
-        const relay = new NDKRelay(url);
-        ndk.pool.relays.set(url, relay);
-        
-        // Try to connect
-        try {
-          await relay.connect();
-          console.log(`Connected to relay: ${url}`);
-        } catch (e) {
-          console.error(`Failed to connect to relay ${url}:`, e);
+        // Already exists in pool
+        console.log(`Relay already exists in pool: ${url}`);
+        const existingRelay = ndk.pool.relays.get(url);
+        if (existingRelay && !existingRelay.connected) {
+          try {
+            await existingRelay.connect();
+            console.log(`Reconnected to existing relay: ${url}`);
+          } catch (e) {
+            console.error(`Failed to reconnect to existing relay ${url}:`, e);
+          }
         }
       }
       
-      // Now try to reconnect the NDK instance to pick up the new relay
-      await ndk.connect();
-      
-      // Get the relay
+      // Get the relay from the pool after connection attempts
       const addedRelay = ndk.pool.relays.get(url);
       
       return addedRelay ? true : false;
