@@ -3,6 +3,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOffline } from '@/hooks/useOffline';
 import { db } from '@/lib/db';
+import RelaySettings from '@/components/settings/RelaySettings';
 import { 
   Card, 
   CardContent, 
@@ -41,7 +42,8 @@ import {
   Smartphone, 
   UserCog, 
   PaintBucket, 
-  EyeOff 
+  EyeOff,
+  Router
 } from 'lucide-react';
 
 export default function Settings() {

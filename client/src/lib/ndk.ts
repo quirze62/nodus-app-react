@@ -1,14 +1,7 @@
 import NDK, { NDKEvent, NDKNip07Signer, NDKPrivateKeySigner, NDKUser, NDKFilter, NDKRelay, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { db } from './db';
 import { NostrEvent, NostrProfile, NostrUser, EventKind } from './nostr';
-
-// Default relays
-const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://relay.nostr.band',
-  'wss://nos.lol',
-  'wss://relay.current.fyi'
-];
+import { getRelayManager, DEFAULT_RELAYS } from './relayManager';
 
 // NDK singleton
 let ndkInstance: NDK | null = null;
@@ -18,12 +11,18 @@ let ndkInstance: NDK | null = null;
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
+    // Initialize NDK with relay manager's relays
     ndkInstance = new NDK({
       explicitRelayUrls: DEFAULT_RELAYS,
       enableOutboxModel: true, // for offline functionality
     });
     
+    // Connect to relays
     await ndkInstance.connect();
+    
+    // Initialize relay manager with NDK instance
+    const relayManager = getRelayManager();
+    await relayManager.initialize(ndkInstance);
   }
   
   return ndkInstance;
