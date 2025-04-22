@@ -72,26 +72,24 @@ export const generateNewUser = async (): Promise<NostrUser> => {
     // Generate a new key pair
     const ndk = await getNDK();
     
-    // Generate a new keypair using NDKPrivateKeySigner
-    const signer = new NDKPrivateKeySigner();
-    await signer.generatePrivateKey();
+    // Create new private key signer with a random key
+    const privateKey = window.crypto.getRandomValues(new Uint8Array(32));
+    const privateKeyHex = Array.from(privateKey)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
     
-    // Set the signer on the NDK instance
+    const signer = new NDKPrivateKeySigner(privateKeyHex);
     ndk.signer = signer;
     
     // Get the user associated with the signer
     const user = await signer.user();
     
-    if (!signer.privateKey) {
-      throw new Error("Failed to generate keys");
-    }
-    
     // Create our user format
     const nostrUser: NostrUser = {
       publicKey: user.pubkey,
-      privateKey: signer.privateKey,
+      privateKey: privateKeyHex,
       npub: user.npub,
-      nsec: signer.privateKey // This would be converted to proper bech32 format in real app
+      nsec: privateKeyHex // This would be converted to proper bech32 format in real app
     };
     
     // Store user
@@ -146,18 +144,21 @@ export const updateUserProfile = async (pubkey: string, profile: NostrProfile): 
       throw new Error("Not signed in");
     }
     
-    const user = ndk.getUser({ pubkey });
-    
     // Format profile for NDK
-    const ndkProfile = {
+    const profileContent = {
       name: profile.name,
       about: profile.about,
-      image: profile.picture,
+      picture: profile.picture,
       nip05: profile.nip05
     };
     
-    // Publish profile
-    await user.publish(ndkProfile);
+    // Create metadata event (kind 0)
+    const event = new NDKEvent(ndk);
+    event.kind = 0; // Metadata event
+    event.content = JSON.stringify(profileContent);
+    
+    // Publish the event
+    await event.publish();
     
     // Update local cache
     await db.storeProfile(pubkey, profile);
@@ -228,7 +229,9 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
     
     // Convert to our format and sort by creation time
     const notes: NostrEvent[] = [];
-    for (const event of events.values()) {
+    
+    // Convert NDKEvents to array of our NostrEvent format
+    Array.from(events).forEach(async (event) => {
       const note: NostrEvent = {
         id: event.id,
         pubkey: event.pubkey,
@@ -243,7 +246,7 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
       await db.storeEvent(note);
       
       notes.push(note);
-    }
+    });
     
     // Sort by time, newest first
     notes.sort((a, b) => b.created_at - a.created_at);
@@ -323,7 +326,9 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
     
     // Convert to our format and decrypt if needed
     const messages: NostrEvent[] = [];
-    for (const event of events.values()) {
+    
+    // Process each event
+    await Promise.all(Array.from(events).map(async (event) => {
       let content = event.content;
       
       // If this is a message to us, try to decrypt it
@@ -350,7 +355,7 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
       await db.storeEvent(message);
       
       messages.push(message);
-    }
+    }));
     
     // Sort by time, oldest first for messages
     messages.sort((a, b) => a.created_at - b.created_at);
@@ -379,31 +384,32 @@ export const subscribeToNotes = (
     // Create filter for text notes
     const filter: NDKFilter = { kinds: [EventKind.TEXT_NOTE] };
     
-    // Create subscription handler
-    const handleEvent = (event: NDKEvent) => {
-      const note: NostrEvent = {
-        id: event.id,
-        pubkey: event.pubkey,
-        created_at: event.created_at,
-        kind: event.kind,
-        tags: event.tags,
-        content: event.content,
-        sig: event.sig || ""
+    // Subscribe to events
+    const subscription = ndk.subscribe(filter);
+    
+    // Set up event handler
+    subscription.on('event', (ndkEvent: NDKEvent) => {
+      const event: NostrEvent = {
+        id: ndkEvent.id,
+        pubkey: ndkEvent.pubkey,
+        created_at: ndkEvent.created_at,
+        kind: ndkEvent.kind,
+        tags: ndkEvent.tags,
+        content: ndkEvent.content,
+        sig: ndkEvent.sig || ""
       };
       
       // Store event in local DB
-      db.storeEvent(note).then(() => {
+      db.storeEvent(event).then(() => {
         // Notify callback
-        onEvent(note);
+        onEvent(event);
       });
-    };
-    
-    // Subscribe
-    const subscription = ndk.subscribe(filter, {
-      closeOnEose: false,
-      onEvent: handleEvent,
-      onEose: onEose
     });
+    
+    // Handle EOSE (End of Stored Events)
+    if (onEose) {
+      subscription.on('eose', onEose);
+    }
     
     // Return unsubscribe function
     return () => {
