@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/db';
-import { generateKeyPair, importKeyFromNsec, NostrUser } from '@/lib/nostr';
-import { apiRequest } from '@/lib/queryClient';
+import { importKeyFromNsec, NostrUser } from '@/lib/nostr';
+import { loginWithPrivateKey, generateNewUser } from '@/lib/ndk';
 
 interface AuthContextType {
   user: NostrUser | null;
@@ -52,41 +52,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadUser();
   }, [toast]);
 
-  // Login with nsec or private key
+  // Login with nsec or private key using NDK
   const login = async (nsecOrPrivKey: string): Promise<boolean> => {
     try {
       setIsLoading(true);
       
-      let importedUser: NostrUser | null = null;
-      
-      // Try to import as nsec
+      // Handle nsec format
+      let privateKey = nsecOrPrivKey;
       if (nsecOrPrivKey.startsWith('nsec')) {
-        importedUser = importKeyFromNsec(nsecOrPrivKey);
+        const importedUser = importKeyFromNsec(nsecOrPrivKey);
+        if (!importedUser || !importedUser.privateKey) {
+          toast({
+            title: 'Invalid Key',
+            description: 'The provided nsec key is not valid.',
+            variant: 'destructive'
+          });
+          return false;
+        }
+        privateKey = importedUser.privateKey;
       }
       
-      // If not successful, try as raw private key (hex)
-      if (!importedUser) {
-        // This is just for demo, in a real app we would validate the hex format
-        importedUser = {
-          privateKey: nsecOrPrivKey,
-          publicKey: 'placeholder', // In a real app, we would derive this
-          npub: 'placeholder',
-          nsec: 'placeholder',
-        };
-      }
+      // Use NDK to login with private key
+      const loggedInUser = await loginWithPrivateKey(privateKey);
       
-      if (!importedUser) {
+      if (!loggedInUser) {
         toast({
-          title: 'Invalid Key',
-          description: 'The provided key is not valid.',
+          title: 'Login Failed',
+          description: 'Failed to authenticate with the provided key.',
           variant: 'destructive'
         });
         return false;
       }
       
-      // Store user in DB
-      await db.storeCurrentUser(importedUser);
-      setUser(importedUser);
+      // Set user in state
+      setUser(loggedInUser);
       
       toast({
         title: 'Success',
@@ -107,16 +106,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Generate new keys
+  // Generate new keys using NDK
   const generateNewKeys = async (): Promise<NostrUser> => {
     try {
       setIsLoading(true);
       
-      // Generate new key pair
-      const newUser = generateKeyPair();
+      // Generate new key pair using NDK
+      const newUser = await generateNewUser();
       
-      // Store in database
-      await db.storeCurrentUser(newUser);
+      if (!newUser) {
+        throw new Error('Failed to generate new user');
+      }
+      
+      // Set user in state
       setUser(newUser);
       
       toast({
