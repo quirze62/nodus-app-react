@@ -18,35 +18,19 @@ export default function Home() {
   const { isOffline } = useOffline();
   const [notes, setNotes] = useState<NostrEvent[]>([]);
   
-  // Add a sample note for testing when there are no notes
-  const sampleNote: NostrEvent = {
-    id: 'sample-test-note',
-    pubkey: '000000000000000000000000000000000000000000000000000000000000000000',
-    created_at: Math.floor(Date.now() / 1000) - 300,
-    kind: 1,
-    tags: [],
-    content: 'This is a sample note to demonstrate notes are loading through our hybrid implementation.',
-    sig: 'sample_signature'
-  };
+  // We'll only show authentic data from Nostr relays
   
   useEffect(() => {
     const fetchNotes = async () => {
       try {
-        // First try to load notes from the network
+        // Load notes from the network
         const fetchedNotes = await loadNotes();
-        
-        // If no notes were returned, use our sample note for testing
-        if (fetchedNotes.length === 0) {
-          console.log('No notes returned from network, using sample note');
-          setNotes([sampleNote]);
-        } else {
-          console.log(`Got ${fetchedNotes.length} notes from network`);
-          setNotes(fetchedNotes);
-        }
+        console.log(`Got ${fetchedNotes.length} notes from network`);
+        setNotes(fetchedNotes);
       } catch (err) {
         console.error('Error fetching notes:', err);
-        // In case of error, show our sample note
-        setNotes([sampleNote]);
+        // In case of error, just keep the current notes or display empty
+        // Don't display any fake sample data
       }
     };
     
@@ -58,7 +42,7 @@ export default function Home() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [loadNotes, isOffline, sampleNote]);
+  }, [loadNotes, isOffline]);
   
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative">
