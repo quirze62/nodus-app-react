@@ -6,10 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Wifi, WifiOff, AlertTriangle } from "lucide-react";
+import { Trash2, Plus, Wifi, WifiOff, AlertTriangle, Bug } from "lucide-react";
 import { DEFAULT_RELAYS, getRelayManager, ManagedRelay } from '@/lib/relayManager';
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionStatus } from '../common/ConnectionStatus';
+import { WebSocketTester } from '../common/WebSocketTester';
 
 export default function RelaySettings() {
   const [relays, setRelays] = useState<ManagedRelay[]>([]);
@@ -210,6 +211,18 @@ export default function RelaySettings() {
       <CardContent className="space-y-4">
         {/* Overall connection status */}
         <ConnectionStatus />
+        
+        {/* Debug WebSocket Test Section */}
+        <div className="border border-yellow-300 rounded-md p-4 bg-yellow-50 dark:bg-yellow-900/20 mb-4">
+          <div className="flex items-center mb-2">
+            <Bug className="h-4 w-4 mr-2 text-yellow-600" />
+            <h3 className="text-sm font-medium text-yellow-600">WebSocket Connection Troubleshooting</h3>
+          </div>
+          <p className="text-xs text-yellow-600 mb-2">
+            This utility tests whether WebSockets work in this environment. If this test fails but HTTP works, it indicates a WebSocket connectivity issue in the hosting environment.
+          </p>
+          <WebSocketTester />
+        </div>
         
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">

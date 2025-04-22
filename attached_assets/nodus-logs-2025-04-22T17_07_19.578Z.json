@@ -1,0 +1,112 @@
+{
+  "timestamp": "2025-04-22T17:07:19.577Z",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  "url": "https://task-tracker-pro-quirze1.replit.app/settings",
+  "logs": [
+    {
+      "level": "INFO",
+      "message": "Relay wss://relay.damus.io connection status: DISCONNECTED",
+      "timestamp": "2025-04-22T17:06:42.176Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Relay wss://nostr.wine connection status: DISCONNECTED",
+      "timestamp": "2025-04-22T17:06:42.176Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Relay wss://relay.nostr.band connection status: DISCONNECTED",
+      "timestamp": "2025-04-22T17:06:42.176Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Relay wss://relay.current.fyi connection status: DISCONNECTED",
+      "timestamp": "2025-04-22T17:06:42.112Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Relay wss://nos.lol connection status: DISCONNECTED",
+      "timestamp": "2025-04-22T17:06:42.050Z"
+    },
+    {
+      "level": "ERROR",
+      "message": "Failed to connect to relay wss://nostr.wine:",
+      "data": {},
+      "timestamp": "2025-04-22T17:06:41.879Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Adding new relay to pool: wss://nostr.wine",
+      "timestamp": "2025-04-22T17:06:41.878Z"
+    },
+    {
+      "level": "ERROR",
+      "message": "Failed to connect to relay wss://relay.current.fyi:",
+      "data": {},
+      "timestamp": "2025-04-22T17:06:41.878Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Adding new relay to pool: wss://relay.current.fyi",
+      "timestamp": "2025-04-22T17:06:41.878Z"
+    },
+    {
+      "level": "ERROR",
+      "message": "Failed to connect to relay wss://nos.lol:",
+      "data": {},
+      "timestamp": "2025-04-22T17:06:41.878Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Adding new relay to pool: wss://nos.lol",
+      "timestamp": "2025-04-22T17:06:41.877Z"
+    },
+    {
+      "level": "ERROR",
+      "message": "Failed to connect to relay wss://relay.nostr.band:",
+      "data": {},
+      "timestamp": "2025-04-22T17:06:41.877Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Adding new relay to pool: wss://relay.nostr.band",
+      "timestamp": "2025-04-22T17:06:41.877Z"
+    },
+    {
+      "level": "ERROR",
+      "message": "Failed to connect to relay wss://relay.damus.io:",
+      "data": {},
+      "timestamp": "2025-04-22T17:06:41.876Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Adding new relay to pool: wss://relay.damus.io",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Attempting to add relay: wss://nostr.wine",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Attempting to add relay: wss://relay.current.fyi",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Attempting to add relay: wss://nos.lol",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Attempting to add relay: wss://relay.nostr.band",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    },
+    {
+      "level": "INFO",
+      "message": "Attempting to add relay: wss://relay.damus.io",
+      "timestamp": "2025-04-22T17:06:41.875Z"
+    }
+  ]
+}
