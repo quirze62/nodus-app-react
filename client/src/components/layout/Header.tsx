@@ -22,7 +22,7 @@ export default function Header() {
             </svg>
           </button>
           <Link href="/" className="flex items-center space-x-2 cursor-pointer">
-            <img src="/src/assets/nodus-logo.svg" alt="Nodus App" className="h-8" />
+            <img src="/src/assets/nodus-logo.png" alt="Nodus" className="h-10" />
           </Link>
         </div>
         
