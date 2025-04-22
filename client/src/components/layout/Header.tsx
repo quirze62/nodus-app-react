@@ -21,11 +21,8 @@ export default function Header() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
           </button>
-          <Link href="/">
-            <div className="flex items-center space-x-2 cursor-pointer">
-              <span className="text-primary dark:text-primary-light font-semibold text-xl">Nodus</span>
-              <span className="text-gray-700 dark:text-gray-300 text-xl font-normal">App</span>
-            </div>
+          <Link href="/" className="flex items-center space-x-2 cursor-pointer">
+            <img src="/src/assets/nodus-logo.svg" alt="Nodus App" className="h-8" />
           </Link>
         </div>
         
