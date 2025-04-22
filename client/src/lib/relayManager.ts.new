@@ -1,5 +1,4 @@
-import NDK, { NDKRelay, NDKRelayStatus } from '@nostr-dev-kit/ndk';
-import { db } from './db';
+import NDK from '@nostr-dev-kit/ndk';
 import { getNDK, addRelayToNDK, removeRelayFromNDK } from './ndk';
 
 // Default Nostr relays for the application
@@ -103,22 +102,29 @@ export class RelayManager {
     
     try {
       // Use our utility function to add relay to NDK
-      const result = await addRelayToNDK(url);
+      const success = await addRelayToNDK(url);
       
-      // Update relay status after connection attempt
-      const relay = this.relays.get(url);
-      if (relay) {
-        const ndkRelay = this.ndk?.pool.relays.get(url);
-        if (ndkRelay && ndkRelay.connected) {
-          relay.status = 'connected';
-          relay.lastConnected = new Date();
-        } else {
-          relay.status = result ? 'connecting' : 'error';
+      // Simulate connecting after a delay (for development environment)
+      if (success) {
+        setTimeout(() => {
+          const relay = this.relays.get(url);
+          if (relay && relay.status === 'connecting') {
+            relay.status = 'connected';
+            relay.lastConnected = new Date();
+            this.relays.set(url, relay);
+            console.log(`[SIMULATED] Connected to relay: ${url}`);
+          }
+        }, 1000);
+      } else {
+        // Update relay status
+        const relay = this.relays.get(url);
+        if (relay) {
+          relay.status = 'error';
+          this.relays.set(url, relay);
         }
-        this.relays.set(url, relay);
       }
       
-      return result;
+      return success;
     } catch (error) {
       console.error(`Failed to add relay ${url}:`, error);
       
@@ -181,10 +187,10 @@ export class RelayManager {
       try {
         if (!read && !write) {
           // If both read and write are disabled, disconnect
-          await this.disconnectFromRelay(url);
+          await this.disconnectRelay(url);
         } else if (relay.status !== 'connected') {
           // If disconnected but should be enabled, connect
-          await this.connectToRelay(url);
+          await this.connectRelay(url);
         }
       } catch (error) {
         console.error(`Failed to update relay ${url}:`, error);
@@ -200,7 +206,7 @@ export class RelayManager {
   /**
    * Connect to a specific relay
    */
-  async connectToRelay(url: string): Promise<boolean> {
+  async connectRelay(url: string): Promise<boolean> {
     if (!this.ndk) {
       this.ndk = await getNDK();
     }
@@ -215,11 +221,11 @@ export class RelayManager {
       relay.status = 'connecting';
       this.relays.set(url, relay);
       
-      // Use the utility function to add/connect relay
+      // Try to connect
       const success = await addRelayToNDK(url);
       
       if (success) {
-        // For simulation purposes, mark as connected after a delay
+        // For simulation - mark as connected after a delay
         setTimeout(() => {
           const updatedRelay = this.relays.get(url);
           if (updatedRelay && updatedRelay.status === 'connecting') {
@@ -254,7 +260,7 @@ export class RelayManager {
   /**
    * Disconnect from a specific relay
    */
-  async disconnectFromRelay(url: string): Promise<boolean> {
+  async disconnectRelay(url: string): Promise<boolean> {
     if (!this.ndk) {
       return false;
     }
@@ -291,7 +297,7 @@ export class RelayManager {
     Array.from(this.relays.keys()).forEach(url => {
       const relay = this.relays.get(url);
       if (relay && (relay.read || relay.write)) {
-        promises.push(this.connectToRelay(url));
+        promises.push(this.connectRelay(url));
       }
     });
     
@@ -299,52 +305,10 @@ export class RelayManager {
   }
   
   /**
-   * Measure latency of all connected relays
+   * Set auto reconnect
    */
-  async measureRelayLatency(): Promise<void> {
-    if (!this.ndk) {
-      return;
-    }
-    
-    // Use Array.from to avoid iterator issues
-    Array.from(this.relays.keys()).forEach(async url => {
-      const relay = this.relays.get(url);
-      if (relay && relay.status === 'connected') {
-        try {
-          const startTime = Date.now();
-          // Ping the relay (using a simple subscription to measure latency)
-          const sub = this.ndk!.subscribe({ limit: 1 }, { relayUrls: [url] });
-          
-          const timeout = setTimeout(() => {
-            sub.stop();
-            if (relay) {
-              relay.latency = -1; // Timeout
-              this.relays.set(url, relay);
-            }
-          }, 5000);
-          
-          // Wait for EOSE (End Of Stored Events)
-          await new Promise<void>(resolve => {
-            sub.on('eose', () => {
-              clearTimeout(timeout);
-              const endTime = Date.now();
-              if (relay) {
-                relay.latency = endTime - startTime;
-                this.relays.set(url, relay);
-              }
-              sub.stop();
-              resolve();
-            });
-          });
-        } catch (error) {
-          console.error(`Failed to measure latency for relay ${url}:`, error);
-          if (relay) {
-            relay.latency = -1;
-            this.relays.set(url, relay);
-          }
-        }
-      }
-    });
+  setAutoReconnect(enabled: boolean): void {
+    this.autoReconnect = enabled;
   }
   
   /**
@@ -378,13 +342,6 @@ export class RelayManager {
     } catch (error) {
       console.error('Failed to save relays to storage:', error);
     }
-  }
-  
-  /**
-   * Set auto reconnect
-   */
-  setAutoReconnect(enabled: boolean): void {
-    this.autoReconnect = enabled;
   }
 }
 
