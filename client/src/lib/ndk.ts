@@ -212,11 +212,12 @@ export const publishNote = async (content: string, tags: string[][] = []): Promi
 };
 
 /**
- * Fetch recent notes from the network
+ * Fetch recent notes from the network using NDK subscription
  */
 export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
   try {
     const ndk = await getNDK();
+    logger.info("Getting notes with NDK subscription");
     
     // Create filter for text notes
     const filter: NDKFilter = {
@@ -224,36 +225,82 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
       limit
     };
     
-    // Fetch events
-    const events = await ndk.fetchEvents(filter);
-    
-    // Convert to our format and sort by creation time
-    const notes: NostrEvent[] = [];
-    
-    // Convert NDKEvents to array of our NostrEvent format
-    Array.from(events).forEach(async (event) => {
-      const note: NostrEvent = {
-        id: event.id,
-        pubkey: event.pubkey,
-        created_at: event.created_at,
-        kind: event.kind,
-        tags: event.tags,
-        content: event.content,
-        sig: event.sig || ""
-      };
+    return new Promise<NostrEvent[]>((resolve) => {
+      const notes: NostrEvent[] = [];
+      const subscription = ndk.subscribe(filter, { closeOnEose: true });
       
-      // Cache event
-      await db.storeEvent(note);
+      subscription.on('event', async (event: NDKEvent) => {
+        logger.info(`Received note: ${event.content.substring(0, 30)}...`);
+        
+        const note: NostrEvent = {
+          id: event.id,
+          pubkey: event.pubkey,
+          created_at: event.created_at,
+          kind: event.kind,
+          tags: event.tags,
+          content: event.content,
+          sig: event.sig || ""
+        };
+        
+        // Cache event in local DB
+        try {
+          await db.storeEvent(note);
+        } catch (e) {
+          logger.error("Error storing note in DB:", e);
+        }
+        
+        notes.push(note);
+      });
       
-      notes.push(note);
+      subscription.on('eose', () => {
+        logger.info(`EOSE received with ${notes.length} notes`);
+        // Sort by created_at, newest first
+        notes.sort((a, b) => b.created_at - a.created_at);
+        resolve(notes);
+      });
+      
+      // Add a fallback timeout in case EOSE never comes
+      setTimeout(() => {
+        if (notes.length > 0) {
+          logger.info(`Timeout reached with ${notes.length} notes`);
+          // Sort by created_at, newest first
+          notes.sort((a, b) => b.created_at - a.created_at);
+          subscription.stop();
+          resolve(notes);
+        } else {
+          // Try a normal fetch as fallback
+          logger.info("No notes received via subscription, trying normal fetch");
+          ndk.fetchEvents(filter)
+            .then(events => {
+              const fetchedNotes = Array.from(events).map(event => ({
+                id: event.id,
+                pubkey: event.pubkey,
+                created_at: event.created_at,
+                kind: event.kind,
+                tags: event.tags,
+                content: event.content,
+                sig: event.sig || ""
+              }));
+              
+              // Store events in local DB
+              for (const note of fetchedNotes) {
+                db.storeEvent(note).catch(e => logger.error("Error storing fetched note:", e));
+              }
+              
+              fetchedNotes.sort((a, b) => b.created_at - a.created_at);
+              subscription.stop();
+              resolve(fetchedNotes);
+            })
+            .catch(error => {
+              logger.error("Error in fallback fetch:", error);
+              subscription.stop();
+              resolve([]);
+            });
+        }
+      }, 5000); // 5 second timeout
     });
-    
-    // Sort by time, newest first
-    notes.sort((a, b) => b.created_at - a.created_at);
-    
-    return notes;
   } catch (error) {
-    console.error("Error fetching notes:", error);
+    logger.error("Error in NDK fetchNotes:", error);
     return [];
   }
 };
