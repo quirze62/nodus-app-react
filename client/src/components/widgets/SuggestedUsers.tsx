@@ -66,8 +66,8 @@ export default function SuggestedUsers() {
                 size="sm"
                 className={`px-3 py-1 text-xs font-medium ${
                   followedUsers.includes(user.id) 
-                    ? 'bg-primary text-white'
-                    : 'text-primary dark:text-primary-light border border-primary dark:border-primary-light hover:bg-primary hover:text-white dark:hover:bg-primary-dark dark:hover:text-white'
+                    ? 'bg-[#145ce8] text-white'
+                    : 'text-[#145ce8] border border-[#145ce8] hover:bg-[#145ce8] hover:text-white'
                 } rounded-full transition-colors`}
                 onClick={() => handleFollow(user.id)}
               >
@@ -78,7 +78,7 @@ export default function SuggestedUsers() {
           
           <Button
             variant="link"
-            className="w-full text-sm text-primary dark:text-primary-light hover:underline"
+            className="w-full text-sm text-[#145ce8] hover:underline"
             onClick={() => setShowAll(!showAll)}
           >
             {showAll ? 'Show less' : 'Show more'}

@@ -33,13 +33,6 @@ function MainLayout({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <MobileNavigation />
-      <div className="md:hidden fixed right-4 bottom-20 z-20">
-        <button className="bg-primary hover:bg-primary-dark text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-6 h-6">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-          </svg>
-        </button>
-      </div>
     </div>
   );
 }
