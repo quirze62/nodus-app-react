@@ -1,222 +1,223 @@
-import { useNDK } from '@nostr-dev-kit/ndk-svelte';
 import { writable } from 'svelte/store';
+import { getNDK, initNDK, addRelay as addNDKRelay, removeRelay as removeNDKRelay } from './ndk-config';
 import { db } from '../db/db';
 import { toast } from '../stores/toast';
-import { isValidRelayUrl } from './ndk-config';
 
-// Store for relay status
+// Create a store for the relay state
 const createRelayStore = () => {
-  const { subscribe, set, update } = writable({
+  // Initial state
+  const state = {
     relays: [],
-    isLoading: false,
+    isLoading: true,
     error: null
-  });
+  };
+  
+  const { subscribe, set, update } = writable(state);
   
   return {
     subscribe,
     
-    // Refresh the relay status
+    // Refresh relay data
     refresh: async () => {
-      update(state => ({ ...state, isLoading: true, error: null }));
+      update(state => ({ ...state, isLoading: true }));
       
       try {
-        const { ndk } = useNDK();
+        // Get relays from database
+        const dbRelays = await db.getRelays();
+        
+        // Initialize NDK if not already initialized
+        const ndk = await initNDK();
         
         // Get relays from NDK
-        const relayStatuses = Array.from(ndk.pool.relays.values()).map(relay => ({
-          url: relay.url,
-          connected: relay.connected,
-          connecting: relay.connecting
-        }));
+        const ndkRelays = ndk.pool?.relays || new Map();
         
-        // Update store
-        update(state => ({
-          ...state,
-          relays: relayStatuses,
-          isLoading: false
-        }));
+        // Merge data
+        const relays = dbRelays.map(dbRelay => {
+          const ndkRelay = ndkRelays.get(dbRelay.url);
+          
+          return {
+            url: dbRelay.url,
+            connected: ndkRelay?.connectionStatus === 1, // 1 = connected
+            checking: false,
+            read: dbRelay.read ?? true,
+            write: dbRelay.write ?? true
+          };
+        });
         
-        return relayStatuses;
+        set({
+          relays,
+          isLoading: false,
+          error: null
+        });
+        
+        return relays;
       } catch (error) {
-        console.error('Error getting relay status:', error);
+        console.error('Error refreshing relays:', error);
         
         update(state => ({
           ...state,
-          error: 'Failed to get relay status',
-          isLoading: false
+          isLoading: false,
+          error: error.message
         }));
         
         return [];
       }
     },
     
-    // Check connection to a specific relay
+    // Check connection to a relay
     checkConnection: async (url) => {
-      if (!isValidRelayUrl(url)) {
-        toast.error(`Invalid relay URL: ${url}`);
-        return false;
-      }
-      
       update(state => ({
         ...state,
-        relays: state.relays.map(r => 
-          r.url === url ? { ...r, checking: true } : r
+        relays: state.relays.map(relay =>
+          relay.url === url ? { ...relay, checking: true } : relay
         )
       }));
       
       try {
-        const { ndk } = useNDK();
-        const relay = ndk.pool.relays.get(url);
+        // Initialize NDK if not already initialized
+        const ndk = await initNDK();
         
-        if (!relay) {
-          throw new Error(`Relay ${url} not found in NDK pool`);
+        // Attempt to connect to the relay
+        const relay = ndk.pool?.relays.get(url);
+        
+        if (relay) {
+          // Reset connection
+          relay.disconnect();
+          await relay.connect();
+          
+          // Get connection status
+          const connected = relay.connectionStatus === 1; // 1 = connected
+          
+          // Update status in the store
+          update(state => ({
+            ...state,
+            relays: state.relays.map(r =>
+              r.url === url ? { ...r, connected, checking: false } : r
+            )
+          }));
+          
+          // Update status in database
+          await db.updateRelayStatus(url, connected);
+          
+          // Show toast
+          if (connected) {
+            toast.success(`Connected to ${url}`);
+          } else {
+            toast.error(`Failed to connect to ${url}`);
+          }
+          
+          return connected;
+        } else {
+          // Relay not found in NDK pool
+          update(state => ({
+            ...state,
+            relays: state.relays.map(r =>
+              r.url === url ? { ...r, connected: false, checking: false } : r
+            )
+          }));
+          
+          toast.error(`Relay ${url} not found in NDK pool`);
+          return false;
         }
-        
-        // Try to connect with timeout
-        const connected = await Promise.race([
-          relay.connect().then(() => true),
-          new Promise(resolve => setTimeout(() => resolve(false), 5000))
-        ]);
-        
-        update(state => ({
-          ...state,
-          relays: state.relays.map(r => 
-            r.url === url ? { ...r, connected, checking: false } : r
-          )
-        }));
-        
-        return connected;
       } catch (error) {
-        console.error(`Error connecting to relay ${url}:`, error);
+        console.error(`Error checking connection to ${url}:`, error);
         
+        // Update status in the store
         update(state => ({
           ...state,
-          relays: state.relays.map(r => 
+          relays: state.relays.map(r =>
             r.url === url ? { ...r, connected: false, checking: false } : r
           )
         }));
         
+        toast.error(`Error checking connection: ${error.message}`);
         return false;
       }
     }
   };
 };
 
-// Create relay store instance
+// Create and export the store
 export const relayStore = createRelayStore();
 
-/**
- * Add a new relay URL to NDK and store it
- * @param {string} url - Relay URL to add
- * @returns {Promise<boolean>} - Success status
- */
+// Initialize the store on creation
+relayStore.refresh().catch(err => console.error('Error initializing relay store:', err));
+
+// Add a relay
 export async function addRelay(url) {
-  // Validate the URL
-  if (!isValidRelayUrl(url)) {
-    toast.error('Invalid relay URL. Must start with wss:// or ws://');
-    return false;
-  }
-  
   try {
-    const { ndk } = useNDK();
+    // Check if URL is valid
+    if (!url.startsWith('wss://')) {
+      url = `wss://${url}`;
+    }
     
-    // Check if relay already exists
-    if (ndk.pool.relays.has(url)) {
+    // Check if already exists
+    const relays = await db.getRelays();
+    const exists = relays.some(relay => relay.url === url);
+    
+    if (exists) {
       toast.info(`Relay ${url} already exists`);
       return true;
     }
     
     // Add to NDK
-    await ndk.pool.addRelay(url);
+    await addNDKRelay(url);
     
     // Add to database
     await db.storeRelay(url);
     
-    // Update store
-    relayStore.refresh();
+    // Refresh relay store
+    await relayStore.refresh();
     
-    toast.success(`Added relay: ${url}`);
     return true;
   } catch (error) {
-    console.error('Error adding relay:', error);
+    console.error(`Error adding relay ${url}:`, error);
     toast.error(`Failed to add relay: ${error.message}`);
-    return false;
+    throw error;
   }
 }
 
-/**
- * Remove a relay from NDK and database
- * @param {string} url - Relay URL to remove
- * @returns {Promise<boolean>} - Success status
- */
+// Remove a relay
 export async function removeRelay(url) {
   try {
-    const { ndk } = useNDK();
-    
-    // Validate
-    if (!url) return false;
-    
-    // Check if relay exists
-    if (!ndk.pool.relays.has(url)) {
-      toast.info(`Relay ${url} doesn't exist`);
-      
-      // Remove from database anyway
-      await db.removeRelay(url);
-      return true;
-    }
-    
     // Remove from NDK
-    ndk.pool.removeRelay(url);
+    await removeNDKRelay(url);
     
     // Remove from database
     await db.removeRelay(url);
     
-    // Update store
-    relayStore.refresh();
+    // Refresh relay store
+    await relayStore.refresh();
     
-    toast.success(`Removed relay: ${url}`);
     return true;
   } catch (error) {
-    console.error('Error removing relay:', error);
+    console.error(`Error removing relay ${url}:`, error);
     toast.error(`Failed to remove relay: ${error.message}`);
-    return false;
+    throw error;
   }
 }
 
-/**
- * Get all relays from database and sync with NDK
- * @returns {Promise<Array>} - Array of relay URLs
- */
+// Sync relays
 export async function syncRelays() {
   try {
-    const { ndk } = useNDK();
-    
     // Get relays from database
-    const dbRelays = await db.getRelays();
+    const relays = await db.getRelays();
     
-    // Get relays from NDK
-    const ndkRelays = Array.from(ndk.pool.relays.keys());
+    // Get NDK instance
+    const ndk = await initNDK();
     
-    // Add missing relays to NDK
-    for (const relay of dbRelays) {
-      if (!ndkRelays.includes(relay.url)) {
+    // Add each relay to NDK
+    for (const relay of relays) {
+      try {
         await ndk.pool.addRelay(relay.url);
+      } catch (error) {
+        console.error(`Error adding relay ${relay.url} to NDK:`, error);
       }
     }
     
-    // Add NDK relays to database (if not already there)
-    for (const url of ndkRelays) {
-      if (!dbRelays.some(r => r.url === url)) {
-        await db.storeRelay(url);
-      }
-    }
-    
-    // Update store
-    relayStore.refresh();
-    
-    return ndkRelays;
+    return true;
   } catch (error) {
     console.error('Error syncing relays:', error);
-    return [];
+    return false;
   }
 }

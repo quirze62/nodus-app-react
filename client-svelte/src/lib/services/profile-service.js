@@ -1,264 +1,297 @@
-import { useNDK, useProfile } from '@nostr-dev-kit/ndk-svelte';
-import { EventKind } from './nostr-event-service';
+import { getNDK, initNDK } from './ndk-config';
+import { NDKKind, NDKEvent } from '@nostr-dev-kit/ndk';
 import { db } from '../db/db';
+import { auth } from '../stores/auth';
 import { toast } from '../stores/toast';
 
-/**
- * Fetch a user's profile with local-first approach
- * @param {string} pubkey - Public key of the user
- * @returns {Promise<Object|null>} - User profile or null
- */
+// Default cache timeout (1 hour)
+const CACHE_TIMEOUT = 60 * 60 * 1000;
+
+// Log function
+function log(message, level = 'info') {
+  const logPrefix = `[${level.toUpperCase()}]`;
+  console[level](`${logPrefix} ${message}`);
+}
+
+// Fetch a profile for a pubkey
 export async function fetchProfile(pubkey) {
   if (!pubkey) return null;
   
   try {
-    // First try to get from local database
-    const localProfile = await db.getProfile(pubkey);
+    log(`Fetching profile for ${pubkey}`);
     
-    // Use NDK's reactive profile
-    const { profileContent, fetchProfile } = useProfile(pubkey);
+    // Check if we have a cached profile that's still fresh
+    const cachedProfile = await db.getProfile(pubkey);
     
-    // Start fetching profile from network
-    fetchProfile().catch(err => {
-      console.warn(`Error fetching profile for ${pubkey}:`, err);
-    });
-    
-    // Return local profile immediately if available
-    if (localProfile) {
-      return localProfile;
+    if (cachedProfile && cachedProfile.updated_at) {
+      const now = Date.now();
+      const cacheAge = now - cachedProfile.updated_at;
+      
+      // If cache is fresh, return it
+      if (cacheAge < CACHE_TIMEOUT) {
+        return cachedProfile;
+      }
     }
     
-    // Wait for network profile (with timeout)
-    const timeoutPromise = new Promise(resolve => {
-      setTimeout(() => resolve(null), 5000);
-    });
+    // Fetch from network
+    const ndk = await initNDK();
     
-    // Get profile from network
-    const profile = await Promise.race([
-      new Promise(resolve => {
-        const unsubscribe = profileContent.subscribe(profile => {
-          if (profile) {
-            unsubscribe();
-            resolve(profile);
-          }
-        });
-      }),
-      timeoutPromise
-    ]);
+    // Create a filter for metadata (kind 0)
+    const filter = {
+      kinds: [NDKKind.Metadata],
+      authors: [pubkey],
+      limit: 1
+    };
     
-    // If we got a profile from the network, store it
-    if (profile) {
+    // Get the most recent profile event
+    const profileEvents = await ndk.fetchEvents(filter);
+    const profileEvent = [...profileEvents][0];
+    
+    if (profileEvent) {
+      let profile;
+      
+      try {
+        // Parse the content as JSON
+        profile = JSON.parse(profileEvent.content);
+      } catch (err) {
+        console.error(`Failed to parse profile content for ${pubkey}:`, err);
+        
+        // If we have a cached profile, return that instead
+        if (cachedProfile) {
+          return cachedProfile;
+        }
+        
+        return null;
+      }
+      
+      // Store in database
       await db.storeProfile(pubkey, profile);
+      
+      // Update the current user's profile if it's their profile
+      if ($auth.isAuthenticated && $auth.user.pubkey === pubkey) {
+        auth.updateUserProfile(profile);
+      }
+      
+      return { pubkey, ...profile };
+    } else if (cachedProfile) {
+      // If we have a cached profile but couldn't fetch a new one, return the cached one
+      return cachedProfile;
     }
     
-    return profile;
+    return null;
   } catch (error) {
-    console.error('Error fetching profile:', error);
-    toast.error('Failed to fetch user profile');
+    console.error(`Error fetching profile for ${pubkey}:`, error);
+    
+    // Try to use cached profile
+    const cachedProfile = await db.getProfile(pubkey);
+    
+    if (cachedProfile) {
+      return cachedProfile;
+    }
+    
     return null;
   }
 }
 
-/**
- * Update the current user's profile
- * @param {Object} profileData - Profile data to update
- * @returns {Promise<boolean>} - Success status
- */
-export async function updateProfile(profileData) {
-  const { ndk, signer } = useNDK();
-  
+// Update a profile
+export async function updateProfile(profile) {
   try {
-    if (!signer) {
-      throw new Error('Not signed in');
+    // Check if user is authenticated
+    const user = auth.get().user;
+    if (!user || !user.privateKey) {
+      throw new Error('Not authenticated');
     }
     
-    const user = await signer.user();
+    // Create a new NDK event
+    const ndk = await initNDK();
+    const event = new NDKEvent(ndk);
     
-    // Create metadata event
-    const event = await ndk.createEvent({
-      kind: EventKind.METADATA,
-      content: JSON.stringify(profileData)
-    });
+    // Set the kind (0 = metadata)
+    event.kind = NDKKind.Metadata;
     
-    // Publish the profile update
+    // Set the content (stringify the profile)
+    event.content = JSON.stringify(profile);
+    
+    // Sign and publish the event
+    await event.sign(user.privateKey);
     await event.publish();
     
-    // Store in database
-    await db.storeProfile(user.pubkey, profileData);
+    // Store in local DB
+    await db.storeProfile(user.pubkey, profile);
     
-    toast.success('Profile updated successfully');
+    // Update the current user's profile
+    auth.updateUserProfile(profile);
+    
+    toast.success('Profile updated successfully!');
     return true;
   } catch (error) {
     console.error('Error updating profile:', error);
-    toast.error('Failed to update profile');
-    return false;
+    toast.error(`Failed to update profile: ${error.message}`);
+    throw error;
   }
 }
 
-/**
- * Get a user's followers
- * @param {string} pubkey - Public key of the user
- * @returns {Promise<Array>} - Array of followers
- */
+// Get followers of a user
 export async function getFollowers(pubkey) {
-  const { ndk } = useNDK();
-  
   try {
-    // Find profiles that have this user in their contact list
+    // Fetch from network
+    const ndk = await initNDK();
+    
+    // Create a filter for follows (kind 3 = contacts)
     const filter = {
-      kinds: [EventKind.CONTACTS],
-      '#p': [pubkey]
+      kinds: [NDKKind.Contacts],
+      "#p": [pubkey]
     };
     
-    const events = await ndk.fetchEvents(filter);
+    // Get the follow events
+    const followEvents = await ndk.fetchEvents(filter);
     
-    // Extract follower pubkeys
-    const followers = Array.from(events).map(event => event.pubkey);
+    // Extract the authors of the follow events
+    const followers = [...followEvents].map(event => event.pubkey);
     
     return followers;
   } catch (error) {
-    console.error('Error getting followers:', error);
+    console.error(`Error getting followers for ${pubkey}:`, error);
     return [];
   }
 }
 
-/**
- * Get users that a user is following
- * @param {string} pubkey - Public key of the user
- * @returns {Promise<Array>} - Array of followed users
- */
+// Get users that a user follows
 export async function getFollowing(pubkey) {
-  const { ndk } = useNDK();
-  
   try {
-    // Get the user's contact list
+    // Fetch from network
+    const ndk = await initNDK();
+    
+    // Create a filter for follows (kind 3 = contacts)
     const filter = {
-      kinds: [EventKind.CONTACTS],
-      authors: [pubkey]
+      kinds: [NDKKind.Contacts],
+      authors: [pubkey],
+      limit: 1
     };
     
-    const events = await ndk.fetchEvents(filter);
+    // Get the most recent contacts list
+    const followEvents = await ndk.fetchEvents(filter);
+    const followEvent = [...followEvents][0];
     
-    // Get the latest contacts event
-    const contactsEvent = Array.from(events)
-      .sort((a, b) => b.created_at - a.created_at)[0];
-    
-    if (!contactsEvent) {
-      return [];
+    if (followEvent) {
+      // Extract the p tags from the event
+      const following = followEvent.tags
+        .filter(tag => tag[0] === 'p')
+        .map(tag => tag[1]);
+      
+      return following;
     }
     
-    // Extract followed user pubkeys from p tags
-    const following = contactsEvent.tags
-      .filter(tag => tag[0] === 'p')
-      .map(tag => tag[1]);
-    
-    return following;
+    return [];
   } catch (error) {
-    console.error('Error getting following:', error);
+    console.error(`Error getting following for ${pubkey}:`, error);
     return [];
   }
 }
 
-/**
- * Update the user's contact list (following list)
- * @param {Array} contacts - Array of pubkeys to follow
- * @returns {Promise<boolean>} - Success status
- */
-export async function updateContacts(contacts) {
-  const { ndk, signer } = useNDK();
-  
+// Follow a user
+export async function followUser(pubkeyToFollow) {
   try {
-    if (!signer) {
-      throw new Error('Not signed in');
+    // Check if user is authenticated
+    const user = auth.get().user;
+    if (!user || !user.privateKey) {
+      throw new Error('Not authenticated');
     }
     
-    // Create tags for each contact
-    const tags = contacts.map(pubkey => ['p', pubkey]);
+    // Get current following list
+    const following = await getFollowing(user.pubkey);
     
-    // Create contacts event
-    const event = await ndk.createEvent({
-      kind: EventKind.CONTACTS,
-      tags
-    });
+    // Check if already following
+    if (following.includes(pubkeyToFollow)) {
+      return true; // Already following
+    }
     
-    // Publish the contacts update
+    // Add to following list
+    const newFollowing = [...following, pubkeyToFollow];
+    
+    // Create a new NDK event
+    const ndk = await initNDK();
+    const event = new NDKEvent(ndk);
+    
+    // Set the kind (3 = contacts)
+    event.kind = NDKKind.Contacts;
+    
+    // Set empty content
+    event.content = '';
+    
+    // Add p tags for all following
+    for (const pubkey of newFollowing) {
+      event.tags.push(['p', pubkey]);
+    }
+    
+    // Sign and publish the event
+    await event.sign(user.privateKey);
     await event.publish();
     
-    toast.success('Contact list updated');
+    toast.success('User followed successfully!');
     return true;
   } catch (error) {
-    console.error('Error updating contacts:', error);
-    toast.error('Failed to update contacts');
-    return false;
+    console.error(`Error following user ${pubkeyToFollow}:`, error);
+    toast.error(`Failed to follow user: ${error.message}`);
+    throw error;
   }
 }
 
-/**
- * Follow a user
- * @param {string} pubkey - Public key of the user to follow
- * @returns {Promise<boolean>} - Success status
- */
-export async function followUser(pubkey) {
-  const { ndk, signer } = useNDK();
-  
+// Unfollow a user
+export async function unfollowUser(pubkeyToUnfollow) {
   try {
-    if (!signer) {
-      throw new Error('Not signed in');
+    // Check if user is authenticated
+    const user = auth.get().user;
+    if (!user || !user.privateKey) {
+      throw new Error('Not authenticated');
     }
     
-    const user = await signer.user();
+    // Get current following list
+    const following = await getFollowing(user.pubkey);
     
-    // Get current contacts
-    const currentContacts = await getFollowing(user.pubkey);
-    
-    // If already following, do nothing
-    if (currentContacts.includes(pubkey)) {
-      return true;
+    // Check if not following
+    if (!following.includes(pubkeyToUnfollow)) {
+      return true; // Already not following
     }
     
-    // Add to contacts
-    const newContacts = [...currentContacts, pubkey];
+    // Remove from following list
+    const newFollowing = following.filter(pubkey => pubkey !== pubkeyToUnfollow);
     
-    // Update contacts
-    return await updateContacts(newContacts);
+    // Create a new NDK event
+    const ndk = await initNDK();
+    const event = new NDKEvent(ndk);
+    
+    // Set the kind (3 = contacts)
+    event.kind = NDKKind.Contacts;
+    
+    // Set empty content
+    event.content = '';
+    
+    // Add p tags for all following
+    for (const pubkey of newFollowing) {
+      event.tags.push(['p', pubkey]);
+    }
+    
+    // Sign and publish the event
+    await event.sign(user.privateKey);
+    await event.publish();
+    
+    toast.success('User unfollowed successfully!');
+    return true;
   } catch (error) {
-    console.error('Error following user:', error);
-    toast.error('Failed to follow user');
-    return false;
+    console.error(`Error unfollowing user ${pubkeyToUnfollow}:`, error);
+    toast.error(`Failed to unfollow user: ${error.message}`);
+    throw error;
   }
 }
 
-/**
- * Unfollow a user
- * @param {string} pubkey - Public key of the user to unfollow
- * @returns {Promise<boolean>} - Success status
- */
-export async function unfollowUser(pubkey) {
-  const { ndk, signer } = useNDK();
-  
+// Check if a user is following another user
+export async function isFollowing(followerPubkey, followedPubkey) {
   try {
-    if (!signer) {
-      throw new Error('Not signed in');
-    }
-    
-    const user = await signer.user();
-    
-    // Get current contacts
-    const currentContacts = await getFollowing(user.pubkey);
-    
-    // If not already following, do nothing
-    if (!currentContacts.includes(pubkey)) {
-      return true;
-    }
-    
-    // Remove from contacts
-    const newContacts = currentContacts.filter(p => p !== pubkey);
-    
-    // Update contacts
-    return await updateContacts(newContacts);
+    const following = await getFollowing(followerPubkey);
+    return following.includes(followedPubkey);
   } catch (error) {
-    console.error('Error unfollowing user:', error);
-    toast.error('Failed to unfollow user');
+    console.error(`Error checking follow status between ${followerPubkey} and ${followedPubkey}:`, error);
     return false;
   }
 }
