@@ -1,27 +1,78 @@
 import { writable } from 'svelte/store';
-import { db } from '../db/db';
 
-// Get the initial theme from localStorage or default to 'system'
-const getInitialTheme = () => {
-  // Check if we have a theme in LocalStorage
-  const storedTheme = typeof localStorage !== 'undefined' ? localStorage.getItem('theme') : null;
-  
-  // Return the stored theme or default to 'system'
-  return storedTheme || 'system';
+// Theme options
+export const THEMES = {
+  LIGHT: 'light',
+  DARK: 'dark',
+  SYSTEM: 'system'
 };
 
-// Create a writable store with the initial theme
-const theme = writable(getInitialTheme());
+// Function to get user's system theme preference
+const getSystemTheme = () => {
+  if (typeof window === 'undefined') return THEMES.LIGHT;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches 
+    ? THEMES.DARK 
+    : THEMES.LIGHT;
+};
 
-// Subscribe to theme changes and update localStorage
-if (typeof localStorage !== 'undefined') {
-  theme.subscribe(value => {
-    localStorage.setItem('theme', value);
-    
-    // Also store in IndexedDB for persistence across sessions
-    db.setTheme(value).catch(err => console.error('Error storing theme:', err));
-  });
+// Function to get initial theme
+const getInitialTheme = () => {
+  if (typeof window === 'undefined') return THEMES.LIGHT;
+  
+  const storedTheme = localStorage.getItem('nodus_theme');
+  if (storedTheme && Object.values(THEMES).includes(storedTheme)) {
+    return storedTheme;
+  }
+  
+  return THEMES.SYSTEM;
+};
+
+// Create theme store
+export const theme = writable(getInitialTheme());
+
+// Function to apply theme to document
+const applyTheme = (newTheme) => {
+  if (typeof window === 'undefined') return;
+  
+  const effectiveTheme = newTheme === THEMES.SYSTEM 
+    ? getSystemTheme() 
+    : newTheme;
+  
+  if (effectiveTheme === THEMES.DARK) {
+    document.body.classList.add('dark');
+  } else {
+    document.body.classList.remove('dark');
+  }
+};
+
+// Watch for theme changes and apply them
+theme.subscribe(newTheme => {
+  applyTheme(newTheme);
+  
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('nodus_theme', newTheme);
+  }
+});
+
+// Watch for system theme changes if using system theme
+if (typeof window !== 'undefined') {
+  window.matchMedia('(prefers-color-scheme: dark)')
+    .addEventListener('change', () => {
+      const currentTheme = localStorage.getItem('nodus_theme');
+      if (currentTheme === THEMES.SYSTEM) {
+        applyTheme(THEMES.SYSTEM);
+      }
+    });
 }
 
-// Export the store
-export { theme };
+/**
+ * Set the theme
+ * @param {string} newTheme - Theme to set (light, dark, or system)
+ */
+export const setTheme = (newTheme) => {
+  if (Object.values(THEMES).includes(newTheme)) {
+    theme.set(newTheme);
+  } else {
+    console.error(`Invalid theme: ${newTheme}. Use one of: ${Object.values(THEMES).join(', ')}`);
+  }
+};

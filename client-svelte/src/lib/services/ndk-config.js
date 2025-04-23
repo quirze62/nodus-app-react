@@ -1,165 +1,117 @@
 import NDK from '@nostr-dev-kit/ndk';
-import { NDKCacheAdapterDexie } from '@nostr-dev-kit/ndk-cache-dexie';
-import { db } from '../db/db';
-import { toast } from '../stores/toast';
+import NDKCacheAdapterDexie from '@nostr-dev-kit/ndk-cache-dexie';
+import { writable } from 'svelte/store';
+
+// Create a store for NDK instance
+export const ndkStore = writable(null);
 
 // Default relays
-const DEFAULT_RELAYS = [
+const defaultRelays = [
   'wss://relay.mynodus.com',
   'wss://relay.damus.io',
   'wss://nos.lol',
-  'wss://relay.current.fyi',
-  'wss://nostr.wine',
-  'wss://relay.nostr.band'
+  'wss://nostr.wine'
 ];
 
-// Global NDK instance
-let ndkInstance = null;
-
-// Initialize NDK
-export async function initNDK() {
-  if (ndkInstance) return ndkInstance;
+/**
+ * Initialize NDK with provided relays and caching
+ * @param {string[]} relays List of relay URLs to connect to
+ * @returns {NDK} NDK instance
+ */
+export const initializeNDK = async (relays = defaultRelays) => {
+  // Create cache adapter
+  const cacheAdapter = new NDKCacheAdapterDexie({ dbName: 'nodus-cache' });
   
-  try {
-    console.info('[INFO] Initializing Nostr client with NDK');
-    
-    // Create a cache adapter with Dexie
-    const cacheAdapter = new NDKCacheAdapterDexie({
-      dbName: 'nodus-ndk-cache'
-    });
-    
-    // Get stored relays from DB
-    let relayUrls;
-    try {
-      const relays = await db.getRelays();
-      relayUrls = relays.map(r => r.url);
-      
-      // If no relays found, use defaults
-      if (!relayUrls.length) {
-        relayUrls = DEFAULT_RELAYS;
-        
-        // Store default relays for future use
-        for (const url of DEFAULT_RELAYS) {
-          await db.storeRelay(url);
-        }
-      }
-    } catch (err) {
-      console.error('Error loading relays from db:', err);
-      relayUrls = DEFAULT_RELAYS;
-    }
-    
-    // Configure NDK
-    ndkInstance = new NDK({
-      explicitRelayUrls: relayUrls,
-      enableOutboxModel: true,
-      cacheAdapter,
-      autoConnectUserRelays: true,
-      autoFetchUserMutelist: true,
-      debug: true
-    });
-    
-    // Initialize signer
-    await ndkInstance.connect();
-    
-    return ndkInstance;
-  } catch (error) {
-    console.error('Error initializing NDK:', error);
-    toast.error('Failed to initialize Nostr client');
-    throw error;
-  }
-}
-
-// Get the NDK instance
-export function getNDK() {
-  if (!ndkInstance) {
-    throw new Error('NDK not initialized. Call initNDK() first.');
-  }
+  // Create NDK instance
+  const ndk = new NDK({
+    explicitRelayUrls: relays,
+    enableOutboxModel: true,
+    cacheAdapter
+  });
   
-  return ndkInstance;
-}
-
-// Add a user's private key to NDK
-export async function setUserPrivateKey(privateKey) {
-  try {
-    const ndk = await initNDK();
-    
-    // Create a signer from private key
-    const signer = NDK.signer.nip07.fromPrivateKey(privateKey);
-    
-    // Set the signer in NDK
-    ndk.signer = signer;
-    
-    return true;
-  } catch (error) {
-    console.error('Error setting user private key:', error);
-    toast.error('Failed to set private key');
-    throw error;
-  }
-}
-
-// Add a relay to NDK
-export async function addRelay(url) {
-  try {
-    const ndk = await initNDK();
-    
-    // Add to NDK
-    await ndk.pool.addRelay(url);
-    
-    // Store in database
-    await db.storeRelay(url);
-    
-    toast.success(`Added relay: ${url}`);
-    return true;
-  } catch (error) {
-    console.error(`Error adding relay ${url}:`, error);
-    toast.error(`Failed to add relay: ${error.message}`);
-    throw error;
-  }
-}
-
-// Remove a relay from NDK
-export async function removeRelay(url) {
-  try {
-    const ndk = await initNDK();
-    
-    // Remove from NDK
-    ndk.pool.removeRelay(url);
-    
-    // Remove from database
-    await db.removeRelay(url);
-    
-    toast.info(`Removed relay: ${url}`);
-    return true;
-  } catch (error) {
-    console.error(`Error removing relay ${url}:`, error);
-    toast.error(`Failed to remove relay: ${error.message}`);
-    throw error;
-  }
-}
-
-// Get all relays from NDK
-export async function getRelays() {
-  try {
-    const ndk = await initNDK();
-    
-    // Get relays from NDK
-    const relays = ndk.pool.relays;
-    
-    // Convert to array with connection status
-    return Array.from(relays.entries()).map(([url, relay]) => ({
-      url,
-      connected: relay.connectionStatus === 1, // 1 = connected
-      read: true,
-      write: true
-    }));
-  } catch (error) {
-    console.error('Error getting relays:', error);
-    toast.error('Failed to get relays');
-    throw error;
-  }
-}
-
-// A wrapper component for NDK that can be used in Svelte components
-export const NDKProvider = {
-  NDK: ndkInstance
+  // Connect to relays
+  await ndk.connect();
+  
+  // Update the store
+  ndkStore.set(ndk);
+  
+  console.log(`Connected to ${relays.length} relays:`, relays);
+  
+  return ndk;
 };
+
+/**
+ * Add a new relay to the NDK instance
+ * @param {string} url Relay URL to add
+ * @returns {Promise<boolean>} Success status
+ */
+export const addRelay = async (url) => {
+  let ndk;
+  ndkStore.subscribe(value => ndk = value)();
+  
+  if (!ndk) {
+    console.error('NDK not initialized');
+    return false;
+  }
+  
+  try {
+    await ndk.pool.addRelay(url);
+    console.log(`Added relay: ${url}`);
+    return true;
+  } catch (error) {
+    console.error(`Failed to add relay ${url}:`, error);
+    return false;
+  }
+};
+
+/**
+ * Remove a relay from the NDK instance
+ * @param {string} url Relay URL to remove
+ * @returns {Promise<boolean>} Success status
+ */
+export const removeRelay = async (url) => {
+  let ndk;
+  ndkStore.subscribe(value => ndk = value)();
+  
+  if (!ndk) {
+    console.error('NDK not initialized');
+    return false;
+  }
+  
+  try {
+    await ndk.pool.removeRelay(url);
+    console.log(`Removed relay: ${url}`);
+    return true;
+  } catch (error) {
+    console.error(`Failed to remove relay ${url}:`, error);
+    return false;
+  }
+};
+
+/**
+ * Get the current relay connection status
+ * @returns {Promise<Array<{url: string, connected: boolean}>>} List of relays with connection status
+ */
+export const getRelayStatus = async () => {
+  let ndk;
+  ndkStore.subscribe(value => ndk = value)();
+  
+  if (!ndk) {
+    console.error('NDK not initialized');
+    return [];
+  }
+  
+  const relays = [];
+  
+  for (const [url, relay] of Object.entries(ndk.pool.relays)) {
+    relays.push({
+      url,
+      connected: relay.status === 1 // WebSocket.OPEN
+    });
+  }
+  
+  return relays;
+};
+
+// Initialize NDK on module import
+initializeNDK();

@@ -1,252 +1,231 @@
-import { writable } from 'svelte/store';
-import { generatePrivateKey, getPublicKey, finalizeEvent, getEventHash } from 'nostr-tools';
-import { db } from '../db/db';
-import { toast } from './toast';
+import { writable, derived } from 'svelte/store';
+import { ndkStore } from '../services/ndk-config.js';
+import { nip19 } from 'nostr-tools';
 
-// Define user type
+// User type definition
 /**
- * @typedef {Object} NostrUser
- * @property {string} privateKey - The user's private key
- * @property {string} pubkey - The user's public key
- * @property {Object|null} profile - The user's profile data
+ * @typedef {Object} User
+ * @property {string} pubkey - User's public key
+ * @property {string} npub - User's npub (encoded public key)
+ * @property {string} privateKey - User's private key (encrypted or null)
+ * @property {Object} profile - User profile data
  */
 
-// Create the auth store with initial state
-const createAuthStore = () => {
-  // Initial state
-  const initialState = {
-    isAuthenticated: false,
-    isLoading: true,
-    user: null,
-    error: null
-  };
-  
-  const { subscribe, set, update } = writable(initialState);
-  
-  // Initialize auth state
-  const initialize = async () => {
-    update(state => ({ ...state, isLoading: true }));
-    
-    try {
-      // Try to load user from database
-      const user = await db.getCurrentUser();
-      
-      if (user) {
-        set({
-          isAuthenticated: true,
-          isLoading: false,
-          user,
-          error: null
-        });
-      } else {
-        set({
-          isAuthenticated: false,
-          isLoading: false,
-          user: null,
-          error: null
-        });
-      }
-    } catch (error) {
-      console.error("Error initializing auth:", error);
-      set({
-        isAuthenticated: false,
-        isLoading: false,
-        user: null,
-        error: error.message
-      });
-    }
-  };
-  
-  // Login with private key
-  const login = async (nsecOrPrivKey) => {
-    update(state => ({ ...state, isLoading: true }));
-    
-    try {
-      let privateKey = nsecOrPrivKey;
-      
-      // If it starts with nsec, convert it to hex
-      if (nsecOrPrivKey.startsWith('nsec')) {
-        try {
-          // Decode nsec to get the raw private key
-          const decoded = window.nostrTools.nip19.decode(nsecOrPrivKey);
-          privateKey = decoded.data;
-        } catch (e) {
-          throw new Error('Invalid nsec format');
-        }
-      }
-      
-      // Generate public key from private key
-      const pubkey = getPublicKey(privateKey);
-      
-      // Create user object
-      const user = {
-        privateKey,
-        pubkey,
-        profile: null
-      };
-      
-      // Store in database
-      await db.storeCurrentUser(user);
-      
-      // Update state
-      set({
-        isAuthenticated: true,
-        isLoading: false,
-        user,
-        error: null
-      });
-      
-      toast.success('Logged in successfully');
-      return true;
-    } catch (error) {
-      console.error("Login error:", error);
-      set({
-        isAuthenticated: false,
-        isLoading: false,
-        user: null,
-        error: error.message
-      });
-      
-      toast.error(`Login failed: ${error.message}`);
-      return false;
-    }
-  };
-  
-  // Generate new keys
-  const generateNewKeys = async () => {
-    update(state => ({ ...state, isLoading: true }));
-    
-    try {
-      // Generate new private key
-      const privateKey = generatePrivateKey();
-      
-      // Get public key
-      const pubkey = getPublicKey(privateKey);
-      
-      // Create user object
-      const user = {
-        privateKey,
-        pubkey,
-        profile: null
-      };
-      
-      // Store in database
-      await db.storeCurrentUser(user);
-      
-      // Update state
-      set({
-        isAuthenticated: true,
-        isLoading: false,
-        user,
-        error: null
-      });
-      
-      toast.success('New keys generated successfully');
-      return user;
-    } catch (error) {
-      console.error("Error generating keys:", error);
-      set({
-        isAuthenticated: false,
-        isLoading: false,
-        user: null,
-        error: error.message
-      });
-      
-      toast.error(`Failed to generate keys: ${error.message}`);
-      throw error;
-    }
-  };
-  
-  // Update user profile
-  const updateUserProfile = async (profile) => {
-    update(state => {
-      if (!state.user) return state;
-      
-      const updatedUser = {
-        ...state.user,
-        profile
-      };
-      
-      // Store updated user
-      db.storeCurrentUser(updatedUser).catch(err => 
-        console.error("Error storing updated user:", err)
-      );
-      
-      return {
-        ...state,
-        user: updatedUser
-      };
-    });
-  };
-  
-  // Logout
-  const logout = async () => {
-    try {
-      // Clear current user from db
-      await db.session.clear();
-      
-      // Update state
-      set({
-        isAuthenticated: false,
-        isLoading: false,
-        user: null,
-        error: null
-      });
-      
-      toast.info('Logged out successfully');
-    } catch (error) {
-      console.error("Logout error:", error);
-      toast.error(`Logout failed: ${error.message}`);
-    }
-  };
-  
-  // Sign an event
-  const signEvent = (event) => {
-    return update(state => {
-      if (!state.user || !state.user.privateKey) {
-        throw new Error('Not authenticated');
-      }
-      
-      try {
-        // Add created_at if not provided
-        if (!event.created_at) {
-          event.created_at = Math.floor(Date.now() / 1000);
-        }
-        
-        // Add pubkey if not provided
-        if (!event.pubkey) {
-          event.pubkey = state.user.pubkey;
-        }
-        
-        // Add id if not provided
-        if (!event.id) {
-          event.id = getEventHash(event);
-        }
-        
-        // Sign the event
-        const signedEvent = finalizeEvent(event, state.user.privateKey);
-        
-        return state;
-      } catch (error) {
-        console.error("Error signing event:", error);
-        throw error;
-      }
-    });
-  };
-  
-  // Initialize on creation
-  initialize().catch(err => console.error("Auth initialization error:", err));
-  
-  return {
-    subscribe,
-    login,
-    logout,
-    generateNewKeys,
-    updateUserProfile,
-    signEvent,
-    initialize
-  };
+// Initial state
+const initialState = {
+  user: null,
+  isLoading: false,
+  error: null
 };
 
-// Create and export the store
-export const auth = createAuthStore();
+// Create the writable store
+const authStore = writable(initialState);
+
+// Create derived stores for commonly used values
+export const user = derived(authStore, $auth => $auth.user);
+export const isAuthenticated = derived(authStore, $auth => !!$auth.user);
+export const isLoading = derived(authStore, $auth => $auth.isLoading);
+export const error = derived(authStore, $auth => $auth.error);
+
+// Load user from localStorage on initialization
+const loadUserFromStorage = () => {
+  if (typeof window === 'undefined') return;
+  
+  try {
+    const storedUser = localStorage.getItem('nodus_user');
+    if (storedUser) {
+      const user = JSON.parse(storedUser);
+      authStore.update(state => ({ ...state, user }));
+    }
+  } catch (error) {
+    console.error('Failed to load user from localStorage:', error);
+  }
+};
+
+// Initialize the store
+loadUserFromStorage();
+
+/**
+ * Login with a private key
+ * @param {string} privateKey - User's private key (nsec or hex)
+ * @returns {Promise<boolean>} Success status
+ */
+export const login = async (privateKey) => {
+  authStore.update(state => ({ ...state, isLoading: true, error: null }));
+  
+  try {
+    let ndk;
+    ndkStore.subscribe(value => ndk = value)();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Check if the privateKey is an nsec, and decode if needed
+    let hexPrivateKey = privateKey;
+    if (privateKey.startsWith('nsec')) {
+      try {
+        const decoded = nip19.decode(privateKey);
+        hexPrivateKey = decoded.data;
+      } catch (error) {
+        throw new Error('Invalid nsec format');
+      }
+    }
+    
+    // Create a user with this private key
+    const user = await ndk.signer.user({
+      privateKey: hexPrivateKey
+    });
+    
+    // Get the public key
+    const pubkey = await user.publicKey;
+    
+    // Encode public key to npub
+    const npub = nip19.npubEncode(pubkey);
+    
+    // Fetch user profile
+    const profile = await fetchUserProfile(pubkey, ndk);
+    
+    // Create user object
+    const userData = {
+      pubkey,
+      npub,
+      privateKey: hexPrivateKey, // Note: In a real app, encrypt this or use a hardware signer
+      profile
+    };
+    
+    // Save to store
+    authStore.update(state => ({ 
+      ...state, 
+      user: userData,
+      isLoading: false
+    }));
+    
+    // Save to localStorage for persistence
+    localStorage.setItem('nodus_user', JSON.stringify(userData));
+    
+    return true;
+  } catch (error) {
+    console.error('Login failed:', error);
+    authStore.update(state => ({ 
+      ...state, 
+      error: error.message || 'Login failed',
+      isLoading: false
+    }));
+    return false;
+  }
+};
+
+/**
+ * Generate a new key pair for a new user
+ * @returns {Promise<User>} New user object
+ */
+export const generateNewKeys = async () => {
+  authStore.update(state => ({ ...state, isLoading: true, error: null }));
+  
+  try {
+    let ndk;
+    ndkStore.subscribe(value => ndk = value)();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Generate a new key pair
+    const { privateKey, publicKey } = window.nostr.generateKeyPair();
+    
+    // Encode public key to npub
+    const npub = nip19.npubEncode(publicKey);
+    
+    // Create empty profile
+    const profile = {
+      name: 'New User',
+      about: '',
+      picture: '',
+      displayName: 'New User',
+      nip05: ''
+    };
+    
+    // Create user object
+    const userData = {
+      pubkey: publicKey,
+      npub,
+      privateKey,
+      profile
+    };
+    
+    // Save to store
+    authStore.update(state => ({ 
+      ...state, 
+      user: userData,
+      isLoading: false
+    }));
+    
+    // Save to localStorage for persistence
+    localStorage.setItem('nodus_user', JSON.stringify(userData));
+    
+    return userData;
+  } catch (error) {
+    console.error('Key generation failed:', error);
+    authStore.update(state => ({ 
+      ...state, 
+      error: error.message || 'Key generation failed',
+      isLoading: false
+    }));
+    throw error;
+  }
+};
+
+/**
+ * Logout the current user
+ */
+export const logout = () => {
+  authStore.update(state => ({ 
+    ...state, 
+    user: null,
+    isLoading: false,
+    error: null
+  }));
+  
+  // Remove from localStorage
+  localStorage.removeItem('nodus_user');
+};
+
+/**
+ * Fetch a user's profile
+ * @param {string} pubkey - User's public key
+ * @param {NDK} ndk - NDK instance
+ * @returns {Promise<Object>} User profile
+ */
+const fetchUserProfile = async (pubkey, ndk) => {
+  try {
+    // Fetch user profile (kind 0)
+    const profileEvent = await ndk.fetchEvent({
+      kinds: [0],
+      authors: [pubkey]
+    });
+    
+    if (profileEvent) {
+      return JSON.parse(profileEvent.content);
+    }
+    
+    // Return default profile if none exists
+    return {
+      name: 'Unknown User',
+      about: '',
+      picture: '',
+      displayName: 'Unknown User',
+      nip05: ''
+    };
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    // Return default profile on error
+    return {
+      name: 'Unknown User',
+      about: '',
+      picture: '',
+      displayName: 'Unknown User',
+      nip05: ''
+    };
+  }
+};

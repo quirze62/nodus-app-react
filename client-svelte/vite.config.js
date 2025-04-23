@@ -1,60 +1,29 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { resolve } from 'path';
-import tailwindcss from '@tailwindcss/vite';
+import path from 'path';
 
 export default defineConfig({
-  // Base path for assets
-  base: '/',
-  
-  // Plugins
-  plugins: [
-    // Svelte plugin
-    svelte(),
-    
-    // Tailwind CSS plugin
-    tailwindcss()
-  ],
-  
-  // Resolve aliases
+  plugins: [svelte()],
   resolve: {
     alias: {
-      '@assets': resolve('./src/assets'),
-      '@components': resolve('./src/lib/components'),
-      '@lib': resolve('./src/lib'),
-      '@routes': resolve('./src/routes'),
-      '@styles': resolve('./src/styles')
+      '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@lib': path.resolve(__dirname, './src/lib'),
+      '@assets': path.resolve(__dirname, './src/assets'),
+      '@routes': path.resolve(__dirname, './src/routes'),
     }
   },
-  
-  // Server options
   server: {
-    port: 3000,
-    host: '0.0.0.0',
-    
-    // Proxy API requests to backend server
+    port: 5173,
     proxy: {
-      '/api': 'http://localhost:5000'
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:5000',
+        ws: true,
+      }
     }
-  },
-  
-  // Optimize dependencies
-  optimizeDeps: {
-    include: [
-      '@nostr-dev-kit/ndk',
-      '@nostr-dev-kit/ndk-svelte',
-      'date-fns',
-      'dexie'
-    ]
-  },
-  
-  // Build options
-  build: {
-    target: 'esnext',
-    outDir: 'dist',
-    assetsDir: 'assets',
-    minify: 'terser',
-    sourcemap: true,
-    emptyOutDir: true
   }
 });

@@ -1,290 +1,295 @@
 import Dexie from 'dexie';
 
-// Define our Dexie database class
+/**
+ * Nodus Database Class
+ * Handles local storage of events, profiles, and user settings using IndexedDB
+ */
 class NodusDatabase extends Dexie {
   constructor() {
-    super('nodus-db');
+    super('nodus_db');
     
     // Define database schema
     this.version(1).stores({
-      events: 'id, pubkey, kind, created_at, [pubkey+kind]',
-      profiles: 'pubkey',
-      session: 'id',
-      settings: 'id',
-      relays: 'url'
+      events: '&id, kind, pubkey, created_at, *tags',
+      profiles: '&pubkey, updated_at, name, displayName, nip05',
+      relays: '&url, added_at, priority',
+      userSettings: '++id, darkMode, lastSync',
+      userFollows: '&pubkey, *follows',
     });
     
-    // Define table types
+    // Initialize tables
     this.events = this.table('events');
     this.profiles = this.table('profiles');
-    this.session = this.table('session');
-    this.settings = this.table('settings');
     this.relays = this.table('relays');
+    this.userSettings = this.table('userSettings');
+    this.userFollows = this.table('userFollows');
   }
   
-  /* Event methods */
-  
-  // Store a Nostr event
+  /**
+   * Store a nostr event in the database
+   * @param {Object} event - Nostr event object
+   * @returns {Promise<string>} - Event ID
+   */
   async storeEvent(event) {
-    if (!event || !event.id) return null;
+    if (!event || !event.id) {
+      throw new Error('Invalid event');
+    }
     
+    // Add or update the event
     try {
       await this.events.put(event);
       return event.id;
     } catch (error) {
-      console.error('Error storing event:', error);
+      console.error('Failed to store event:', error);
       throw error;
     }
   }
   
-  // Store multiple events
-  async storeEvents(events) {
-    if (!events || !events.length) return [];
-    
-    try {
-      await this.events.bulkPut(events);
-      return events.map(e => e.id);
-    } catch (error) {
-      console.error('Error storing events:', error);
-      throw error;
-    }
-  }
-  
-  // Get event by ID
-  async getEvent(id) {
-    if (!id) return null;
-    
-    try {
-      return await this.events.get(id);
-    } catch (error) {
-      console.error(`Error getting event ${id}:`, error);
-      throw error;
-    }
-  }
-  
-  // Get events by kind
+  /**
+   * Get events by kind
+   * @param {number} kind - Event kind
+   * @param {number} limit - Max number of events to return
+   * @returns {Promise<Array>} - Array of events
+   */
   async getEventsByKind(kind, limit = 50) {
     try {
       return await this.events
         .where('kind')
         .equals(kind)
-        .reverse() // Most recent first
+        .reverse() // Latest first
         .limit(limit)
         .toArray();
     } catch (error) {
-      console.error(`Error getting events of kind ${kind}:`, error);
-      throw error;
+      console.error(`Failed to get events by kind ${kind}:`, error);
+      return [];
     }
   }
   
-  // Get events by pubkey
+  /**
+   * Get events by pubkey (author)
+   * @param {string} pubkey - Author's public key
+   * @param {number} limit - Max number of events to return
+   * @returns {Promise<Array>} - Array of events
+   */
   async getEventsByPubkey(pubkey, limit = 50) {
-    if (!pubkey) return [];
-    
     try {
       return await this.events
         .where('pubkey')
         .equals(pubkey)
-        .reverse() // Most recent first
+        .reverse() // Latest first
         .limit(limit)
         .toArray();
     } catch (error) {
-      console.error(`Error getting events for pubkey ${pubkey}:`, error);
-      throw error;
+      console.error(`Failed to get events by pubkey ${pubkey}:`, error);
+      return [];
     }
   }
   
-  // Get events by pubkey and kind
-  async getEventsByPubkeyAndKind(pubkey, kind, limit = 50) {
-    if (!pubkey) return [];
-    
-    try {
-      return await this.events
-        .where('[pubkey+kind]')
-        .equals([pubkey, kind])
-        .reverse() // Most recent first
-        .limit(limit)
-        .toArray();
-    } catch (error) {
-      console.error(`Error getting events for pubkey ${pubkey} and kind ${kind}:`, error);
-      throw error;
-    }
-  }
-  
-  /* Profile methods */
-  
-  // Store a profile
+  /**
+   * Store a user profile
+   * @param {string} pubkey - User's public key
+   * @param {Object} profile - Profile data
+   * @returns {Promise<void>}
+   */
   async storeProfile(pubkey, profile) {
-    if (!pubkey || !profile) return false;
+    if (!pubkey || !profile) {
+      throw new Error('Invalid profile data');
+    }
     
     try {
       await this.profiles.put({
-        pubkey,
         ...profile,
+        pubkey,
         updated_at: Date.now()
       });
-      return true;
     } catch (error) {
-      console.error(`Error storing profile for ${pubkey}:`, error);
+      console.error('Failed to store profile:', error);
       throw error;
     }
   }
   
-  // Get a profile
+  /**
+   * Get a user profile
+   * @param {string} pubkey - User's public key
+   * @returns {Promise<Object|undefined>} - Profile data or undefined
+   */
   async getProfile(pubkey) {
-    if (!pubkey) return null;
+    if (!pubkey) return undefined;
     
     try {
       return await this.profiles.get(pubkey);
     } catch (error) {
-      console.error(`Error getting profile for ${pubkey}:`, error);
-      throw error;
+      console.error(`Failed to get profile for ${pubkey}:`, error);
+      return undefined;
     }
   }
   
-  /* Session methods */
-  
-  // Store the current user
-  async storeCurrentUser(user) {
-    if (!user || !user.pubkey) return false;
+  /**
+   * Store user's followed pubkeys
+   * @param {string} pubkey - User's public key
+   * @param {Array<string>} follows - Array of followed pubkeys
+   * @returns {Promise<void>}
+   */
+  async storeUserFollows(pubkey, follows) {
+    if (!pubkey || !Array.isArray(follows)) {
+      throw new Error('Invalid follow data');
+    }
     
     try {
-      await this.session.put({
-        id: 1, // Only one user session at a time
-        ...user,
-        updated_at: Date.now()
-      });
-      return true;
+      await this.userFollows.put({ pubkey, follows });
     } catch (error) {
-      console.error('Error storing current user:', error);
+      console.error('Failed to store user follows:', error);
       throw error;
     }
   }
   
-  // Get the current user
-  async getCurrentUser() {
+  /**
+   * Get user's followed pubkeys
+   * @param {string} pubkey - User's public key
+   * @returns {Promise<Array<string>>} - Array of followed pubkeys
+   */
+  async getUserFollows(pubkey) {
+    if (!pubkey) return [];
+    
     try {
-      return await this.session.get(1);
+      const followData = await this.userFollows.get(pubkey);
+      return followData?.follows || [];
     } catch (error) {
-      console.error('Error getting current user:', error);
-      throw error;
+      console.error(`Failed to get follows for ${pubkey}:`, error);
+      return [];
     }
   }
   
-  /* Settings methods */
-  
-  // Set theme
-  async setTheme(theme) {
-    try {
-      const settings = await this.settings.get(1) || { id: 1 };
-      settings.theme = theme;
-      settings.updated_at = Date.now();
-      
-      await this.settings.put(settings);
-      return true;
-    } catch (error) {
-      console.error('Error setting theme:', error);
-      throw error;
-    }
-  }
-  
-  // Get theme
-  async getTheme() {
-    try {
-      const settings = await this.settings.get(1);
-      return settings?.theme || 'system';
-    } catch (error) {
-      console.error('Error getting theme:', error);
-      throw error;
-    }
-  }
-  
-  // Update last sync time
-  async updateLastSync() {
-    try {
-      const settings = await this.settings.get(1) || { id: 1 };
-      settings.lastSync = new Date();
-      settings.updated_at = Date.now();
-      
-      await this.settings.put(settings);
-      return true;
-    } catch (error) {
-      console.error('Error updating last sync:', error);
-      throw error;
-    }
-  }
-  
-  // Get last sync time
-  async getLastSync() {
-    try {
-      const settings = await this.settings.get(1);
-      return settings?.lastSync || null;
-    } catch (error) {
-      console.error('Error getting last sync:', error);
-      throw error;
-    }
-  }
-  
-  /* Relay methods */
-  
-  // Store a relay
-  async storeRelay(url, read = true, write = true) {
-    if (!url) return false;
+  /**
+   * Store a relay
+   * @param {string} url - Relay URL
+   * @param {number} priority - Relay priority (1=primary, 2=secondary, etc)
+   * @returns {Promise<void>}
+   */
+  async storeRelay(url, priority = 1) {
+    if (!url) throw new Error('Invalid relay URL');
     
     try {
       await this.relays.put({
         url,
-        read,
-        write,
-        updated_at: Date.now()
+        priority,
+        added_at: Date.now()
       });
-      return true;
     } catch (error) {
-      console.error(`Error storing relay ${url}:`, error);
+      console.error('Failed to store relay:', error);
       throw error;
     }
   }
   
-  // Get all relays
+  /**
+   * Get all stored relays
+   * @returns {Promise<Array>} - Array of relay objects
+   */
   async getRelays() {
     try {
-      return await this.relays.toArray();
+      return await this.relays
+        .orderBy('priority')
+        .toArray();
     } catch (error) {
-      console.error('Error getting relays:', error);
-      throw error;
+      console.error('Failed to get relays:', error);
+      return [];
     }
   }
   
-  // Remove a relay
+  /**
+   * Remove a relay
+   * @param {string} url - Relay URL
+   * @returns {Promise<void>}
+   */
   async removeRelay(url) {
-    if (!url) return false;
+    if (!url) throw new Error('Invalid relay URL');
     
     try {
       await this.relays.delete(url);
-      return true;
     } catch (error) {
-      console.error(`Error removing relay ${url}:`, error);
+      console.error(`Failed to remove relay ${url}:`, error);
       throw error;
     }
   }
   
-  // Update relay status
-  async updateRelayStatus(url, connected) {
-    if (!url) return false;
-    
+  /**
+   * Set dark mode preference
+   * @param {boolean} darkMode - Whether dark mode is enabled
+   * @returns {Promise<void>}
+   */
+  async setDarkMode(darkMode) {
     try {
-      const relay = await this.relays.get(url);
+      const settings = await this.userSettings.toCollection().first();
       
-      if (relay) {
-        relay.connected = connected;
-        relay.updated_at = Date.now();
-        
-        await this.relays.put(relay);
+      if (settings) {
+        await this.userSettings.update(settings.id, { darkMode });
+      } else {
+        await this.userSettings.add({ darkMode, lastSync: null });
       }
-      
-      return true;
     } catch (error) {
-      console.error(`Error updating relay status for ${url}:`, error);
+      console.error('Failed to set dark mode:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get dark mode preference
+   * @returns {Promise<boolean>} - Whether dark mode is enabled
+   */
+  async getDarkMode() {
+    try {
+      const settings = await this.userSettings.toCollection().first();
+      return settings?.darkMode || false;
+    } catch (error) {
+      console.error('Failed to get dark mode setting:', error);
+      return false;
+    }
+  }
+  
+  /**
+   * Update last sync timestamp
+   * @returns {Promise<void>}
+   */
+  async updateLastSync() {
+    try {
+      const settings = await this.userSettings.toCollection().first();
+      
+      if (settings) {
+        await this.userSettings.update(settings.id, { lastSync: new Date() });
+      } else {
+        await this.userSettings.add({ darkMode: false, lastSync: new Date() });
+      }
+    } catch (error) {
+      console.error('Failed to update last sync:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Get last sync timestamp
+   * @returns {Promise<Date|null>} - Last sync timestamp or null
+   */
+  async getLastSync() {
+    try {
+      const settings = await this.userSettings.toCollection().first();
+      return settings?.lastSync || null;
+    } catch (error) {
+      console.error('Failed to get last sync:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Clear all cached data
+   * @returns {Promise<void>}
+   */
+  async clearCache() {
+    try {
+      await this.events.clear();
+      await this.profiles.clear();
+      console.log('Cache cleared');
+    } catch (error) {
+      console.error('Failed to clear cache:', error);
       throw error;
     }
   }
