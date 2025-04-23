@@ -1,0 +1,32 @@
+run = "cd client-svelte && npm run dev"
+language = "javascript"
+
+[nix]
+channel = "stable-23_11"
+
+[env]
+XDG_CONFIG_HOME = "$REPL_HOME/.config"
+PATH = "/home/runner/$REPL_SLUG/.config/npm/node_global/bin:/home/runner/$REPL_SLUG/node_modules/.bin"
+npm_config_prefix = "/home/runner/$REPL_SLUG/.config/npm/node_global"
+
+[rules]
+# Ensure this runs on port 5173 by default
+[rules.port]
+[rules.port.5173]
+protocol = "http"
+
+[packager]
+language = "nodejs"
+
+[packager.features]
+packageSearch = true
+guessImports = true
+enabledForHosting = false
+
+[languages]
+
+[languages.javascript]
+pattern = "**/{*.js,*.jsx,*.ts,*.tsx,*.json}"
+
+[languages.javascript.languageServer]
+start = "typescript-language-server --stdio"

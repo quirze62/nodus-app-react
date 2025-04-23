@@ -1,25 +1,25 @@
 {
   "name": "nodus-svelte",
-  "version": "1.0.0",
-  "description": "Nodus - A modern Nostr client built with Svelte",
+  "private": true,
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
-    "@nostr-dev-kit/ndk": "^2.0.5",
-    "@nostr-dev-kit/ndk-cache-dexie": "^2.0.5",
-    "@nostr-dev-kit/ndk-svelte": "^2.0.5",
-    "date-fns": "^2.30.0",
-    "dexie": "^3.2.4",
-    "nostr-tools": "^1.17.0",
-    "svelte": "^4.2.0",
-    "svelte-routing": "^2.5.0"
+    "@nostr-dev-kit/ndk": "^2.14.2",
+    "@nostr-dev-kit/ndk-cache-dexie": "^2.6.4",
+    "@nostr-dev-kit/ndk-svelte": "^2.4.8",
+    "dexie": "^4.0.11",
+    "svelte": "^5.28.2",
+    "svelte-routing": "^2.13.0"
   },
   "devDependencies": {
-    "@sveltejs/vite-plugin-svelte": "^2.4.5",
-    "vite": "^4.4.9"
+    "@sveltejs/vite-plugin-svelte": "^4.1.0",
+    "svelte-check": "^4.1.6",
+    "vite": "^5.4.18"
   }
 }

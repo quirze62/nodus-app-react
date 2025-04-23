@@ -1,0 +1,12 @@
+{
+  "workflows": [
+    {
+      "name": "Start application",
+      "command": "NODE_ENV=development tsx server/index.ts"
+    },
+    {
+      "name": "Start Svelte application",
+      "command": "cd client-svelte && npm run dev"
+    }
+  ]
+}

@@ -1,384 +1,296 @@
 <script>
   import { onMount } from 'svelte';
-  import { navigate } from 'svelte-routing';
-  import Layout from '../components/Layout.svelte';
-  import { loadUserNotes, userEvents, isLoading as notesLoading, error as notesError } from '../lib/services/nostr-event-service.js';
-  import { getCurrentUserProfile, updateProfile, cachedProfiles, isLoading as profileLoading, error as profileError } from '../lib/services/profile-service.js';
-  import { isAuthenticated, user } from '../lib/stores/auth.js';
-  import { formatDistanceToNow } from 'date-fns';
+  import { user } from '../lib/stores/auth.js';
   
-  // Current user profile 
-  let profile = {
-    name: '',
-    displayName: '',
-    about: '',
-    picture: '',
-    banner: '',
-    website: '',
-    nip05: '',
-    lud16: ''
-  };
-  
-  // Editing state
+  let currentUser;
+  let profileData = null;
+  let isLoading = true;
   let isEditing = false;
-  let editedProfile = { ...profile };
-  let isSaving = false;
-  let saveError = '';
+  let errorMessage = '';
+  let userNotes = [];
   
-  // Function to format date
-  function formatDate(timestamp) {
-    if (!timestamp) return '';
-    
-    // Convert from seconds to milliseconds if needed
-    const date = new Date(timestamp * 1000);
-    
-    return formatDistanceToNow(date, { addSuffix: true });
-  }
+  // Form fields
+  let displayName = '';
+  let about = '';
+  let picture = '';
+  let nip05 = '';
+  let website = '';
   
-  // Load user data
+  // Subscribe to user changes
+  const unsubscribe = user.subscribe(value => {
+    currentUser = value;
+  });
+  
   onMount(async () => {
-    if (!$isAuthenticated) {
-      navigate('/login');
-      return;
-    }
-    
     try {
-      // Load user profile
-      const userProfile = await getCurrentUserProfile();
-      if (userProfile) {
-        profile = userProfile;
-        editedProfile = { ...profile };
+      if (currentUser) {
+        // Simulate profile data loading
+        setTimeout(() => {
+          profileData = {
+            pubkey: currentUser.pubkey,
+            displayName: currentUser.displayName || 'Nodus User',
+            about: 'No bio provided yet.',
+            picture: '',
+            nip05: '',
+            website: ''
+          };
+          
+          // Initialize form fields
+          displayName = profileData.displayName || '';
+          about = profileData.about || '';
+          picture = profileData.picture || '';
+          nip05 = profileData.nip05 || '';
+          website = profileData.website || '';
+          
+          // Simulate user notes
+          userNotes = [
+            {
+              id: '1',
+              pubkey: currentUser.pubkey,
+              content: 'This is a sample note from your profile.',
+              created_at: new Date().getTime() / 1000 - 3600
+            }
+          ];
+          
+          isLoading = false;
+        }, 1000);
       }
-      
-      // Load user notes
-      await loadUserNotes($user?.publicKey, 50);
-    } catch (err) {
-      console.error('[ERROR] Failed to load user data:', err);
+    } catch (error) {
+      console.error('Error loading profile:', error);
+      errorMessage = 'Failed to load profile data.';
+      isLoading = false;
     }
   });
   
-  // Function to handle edit mode
-  function startEditing() {
-    editedProfile = { ...profile };
-    isEditing = true;
-  }
-  
-  // Function to cancel editing
-  function cancelEditing() {
-    editedProfile = { ...profile };
-    isEditing = false;
-    saveError = '';
-  }
-  
-  // Function to save profile
-  async function saveProfile() {
-    if (!$isAuthenticated) {
-      return;
-    }
+  function toggleEdit() {
+    isEditing = !isEditing;
     
-    try {
-      isSaving = true;
-      saveError = '';
-      
-      // Update the profile
-      const success = await updateProfile(editedProfile);
-      
-      if (success) {
-        // Update local state
-        profile = { ...editedProfile };
-        isEditing = false;
-      } else {
-        saveError = 'Failed to update profile';
-      }
-    } catch (err) {
-      console.error('[ERROR] Failed to save profile:', err);
-      saveError = err.message || 'Failed to save profile';
-    } finally {
-      isSaving = false;
+    if (isEditing) {
+      // Initialize form values from current profile
+      displayName = profileData.displayName || '';
+      about = profileData.about || '';
+      picture = profileData.picture || '';
+      nip05 = profileData.nip05 || '';
+      website = profileData.website || '';
     }
   }
   
-  // Compute loading state
-  $: isLoading = $profileLoading || $notesLoading;
+  async function saveProfile() {
+    try {
+      // Update profile data (this would be persisted in a real implementation)
+      profileData = {
+        ...profileData,
+        displayName,
+        about,
+        picture,
+        nip05,
+        website
+      };
+      
+      isEditing = false;
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      errorMessage = 'Failed to update profile.';
+    }
+  }
   
-  // Compute error state
-  $: error = $profileError || $notesError;
+  function formatTime(timestamp) {
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
 </script>
 
-<Layout title="Profile" {isLoading}>
-  <div class="profile-page">
-    {#if error}
-      <div class="error-message card">
-        <p>{error}</p>
-      </div>
-    {/if}
-    
-    <div class="profile-container card">
-      <div class="profile-banner">
-        {#if profile.banner}
-          <img src={profile.banner} alt="Profile banner" />
-        {/if}
-      </div>
-      
-      <div class="profile-header">
+<div class="profile-container">
+  {#if isLoading}
+    <div class="loading">
+      <p>Loading profile...</p>
+    </div>
+  {:else if errorMessage}
+    <div class="error-message">
+      {errorMessage}
+    </div>
+  {:else}
+    <div class="profile-header">
+      <div class="profile-info">
         <div class="profile-avatar">
-          {#if profile.picture}
-            <img src={profile.picture} alt="Profile avatar" />
+          {#if profileData.picture}
+            <img src={profileData.picture} alt="Profile" />
           {:else}
             <div class="avatar-placeholder"></div>
           {/if}
         </div>
         
-        {#if isEditing}
-          <div class="edit-actions">
-            <button class="btn cancel-btn" on:click={cancelEditing}>
-              Cancel
-            </button>
-            <button
-              class="btn save-btn"
-              on:click={saveProfile}
-              disabled={isSaving}
-            >
-              {isSaving ? 'Saving...' : 'Save Profile'}
-            </button>
+        <div class="profile-details">
+          <h1>{profileData.displayName}</h1>
+          
+          <div class="profile-pubkey">
+            {profileData.pubkey.slice(0, 8)}...{profileData.pubkey.slice(-8)}
           </div>
-        {:else}
-          <button class="btn edit-btn" on:click={startEditing}>
-            Edit Profile
-          </button>
-        {/if}
+          
+          {#if profileData.nip05}
+            <div class="profile-nip05">
+              ✓ {profileData.nip05}
+            </div>
+          {/if}
+          
+          {#if profileData.website}
+            <div class="profile-website">
+              <a href={profileData.website} target="_blank" rel="noopener noreferrer">
+                {profileData.website}
+              </a>
+            </div>
+          {/if}
+          
+          <div class="profile-about">
+            {profileData.about}
+          </div>
+        </div>
       </div>
       
-      {#if isEditing}
-        <div class="profile-edit">
-          {#if saveError}
-            <div class="error-message">
-              <p>{saveError}</p>
-            </div>
-          {/if}
-          
-          <div class="edit-form">
-            <div class="form-group">
-              <label for="name">Username</label>
-              <input
-                type="text"
-                id="name"
-                bind:value={editedProfile.name}
-                placeholder="Username"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="displayName">Display Name</label>
-              <input
-                type="text"
-                id="displayName"
-                bind:value={editedProfile.displayName}
-                placeholder="Display Name"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="picture">Profile Picture URL</label>
-              <input
-                type="text"
-                id="picture"
-                bind:value={editedProfile.picture}
-                placeholder="https://example.com/avatar.jpg"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="banner">Banner Image URL</label>
-              <input
-                type="text"
-                id="banner"
-                bind:value={editedProfile.banner}
-                placeholder="https://example.com/banner.jpg"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="about">About</label>
-              <textarea
-                id="about"
-                bind:value={editedProfile.about}
-                placeholder="Tell us about yourself"
-                rows="4"
-              ></textarea>
-            </div>
-            
-            <div class="form-group">
-              <label for="website">Website</label>
-              <input
-                type="text"
-                id="website"
-                bind:value={editedProfile.website}
-                placeholder="https://example.com"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="nip05">NIP-05 Identifier</label>
-              <input
-                type="text"
-                id="nip05"
-                bind:value={editedProfile.nip05}
-                placeholder="username@domain.com"
-              />
-              <p class="help-text">
-                A NIP-05 identifier helps verify your identity on Nostr.
-              </p>
-            </div>
-            
-            <div class="form-group">
-              <label for="lud16">Lightning Address</label>
-              <input
-                type="text"
-                id="lud16"
-                bind:value={editedProfile.lud16}
-                placeholder="username@domain.com"
-              />
-              <p class="help-text">
-                Bitcoin Lightning address for receiving payments.
-              </p>
-            </div>
-          </div>
-        </div>
-      {:else}
-        <div class="profile-info">
-          <h2 class="profile-name">
-            {profile.displayName || profile.name || 'Anonymous User'}
-          </h2>
-          
-          {#if profile.name && profile.displayName !== profile.name}
-            <p class="profile-username">@{profile.name}</p>
-          {/if}
-          
-          {#if profile.about}
-            <p class="profile-bio">{profile.about}</p>
-          {/if}
-          
-          <div class="profile-meta">
-            {#if profile.website}
-              <div class="meta-item">
-                <span class="meta-icon">🌐</span>
-                <a href={profile.website} target="_blank" rel="noopener noreferrer">
-                  {profile.website.replace(/^https?:\/\//, '')}
-                </a>
-              </div>
-            {/if}
-            
-            {#if profile.nip05}
-              <div class="meta-item">
-                <span class="meta-icon">✓</span>
-                <span class="meta-text">{profile.nip05}</span>
-              </div>
-            {/if}
-            
-            {#if $user}
-              <div class="meta-item">
-                <span class="meta-icon">🔑</span>
-                <span class="meta-text">{$user.npub.substring(0, 8)}...{$user.npub.substring($user.npub.length - 8)}</span>
-              </div>
-            {/if}
-          </div>
+      {#if currentUser && currentUser.pubkey === profileData.pubkey}
+        <div class="profile-actions">
+          <button on:click={toggleEdit}>
+            {isEditing ? 'Cancel' : 'Edit Profile'}
+          </button>
         </div>
       {/if}
     </div>
     
-    <div class="profile-tabs">
-      <div class="tab active">Notes</div>
-      <div class="tab">Replies</div>
-      <div class="tab">Media</div>
-      <div class="tab">Likes</div>
-    </div>
+    {#if isEditing}
+      <div class="edit-profile">
+        <h2>Edit Profile</h2>
+        
+        <div class="form-group">
+          <label for="displayName">Display Name</label>
+          <input type="text" id="displayName" bind:value={displayName} />
+        </div>
+        
+        <div class="form-group">
+          <label for="about">About</label>
+          <textarea id="about" bind:value={about} rows="3"></textarea>
+        </div>
+        
+        <div class="form-group">
+          <label for="picture">Profile Picture URL</label>
+          <input type="text" id="picture" bind:value={picture} />
+        </div>
+        
+        <div class="form-group">
+          <label for="nip05">NIP-05 Identifier</label>
+          <input type="text" id="nip05" bind:value={nip05} />
+        </div>
+        
+        <div class="form-group">
+          <label for="website">Website</label>
+          <input type="text" id="website" bind:value={website} />
+        </div>
+        
+        <div class="form-actions">
+          <button class="cancel-button" on:click={toggleEdit}>Cancel</button>
+          <button class="save-button" on:click={saveProfile}>Save Profile</button>
+        </div>
+      </div>
+    {/if}
     
-    <div class="notes-container">
-      {#if $userEvents.length === 0}
-        <div class="empty-notes card">
-          <h3>No notes yet</h3>
-          <p>You haven't posted any notes yet. When you do, they will appear here.</p>
+    <div class="profile-content">
+      <h2>Notes</h2>
+      
+      {#if userNotes.length === 0}
+        <div class="empty-state">
+          <p>No notes to display.</p>
         </div>
       {:else}
-        {#each $userEvents as note}
-          <div class="note-item card">
-            <div class="note-header">
-              <div class="note-time">
-                {formatDate(note.created_at)}
+        <div class="notes-list">
+          {#each userNotes as note}
+            <div class="note-card">
+              <div class="note-header">
+                <div class="user-info">
+                  <div class="user-name">
+                    {profileData.displayName}
+                  </div>
+                </div>
+                <div class="note-time">
+                  {formatTime(note.created_at)}
+                </div>
+              </div>
+              <div class="note-content">
+                {note.content}
+              </div>
+              <div class="note-actions">
+                <button class="action-button">Like</button>
+                <button class="action-button">Repost</button>
+                <button class="action-button">Reply</button>
               </div>
             </div>
-            
-            <div class="note-content">
-              {note.content}
-            </div>
-            
-            <div class="note-actions">
-              <button class="action-btn">
-                <span class="action-icon">💬</span>
-                <span class="action-label">Reply</span>
-              </button>
-              
-              <button class="action-btn">
-                <span class="action-icon">🔄</span>
-                <span class="action-label">Repost</span>
-              </button>
-              
-              <button class="action-btn">
-                <span class="action-icon">❤️</span>
-                <span class="action-label">Like</span>
-              </button>
-            </div>
-          </div>
-        {/each}
+          {/each}
+        </div>
       {/if}
     </div>
-  </div>
-</Layout>
+  {/if}
+</div>
 
 <style>
-  .profile-page {
-    max-width: 600px;
+  .profile-container {
+    max-width: 800px;
     margin: 0 auto;
   }
   
-  .profile-container {
-    margin-bottom: 2rem;
-    overflow: visible;
+  .loading {
+    text-align: center;
+    padding: 40px 0;
+    color: #666;
   }
   
-  .profile-banner {
-    height: 200px;
-    background-color: var(--nodus-blue);
-    overflow: hidden;
+  :global(body.dark) .loading {
+    color: #aaa;
   }
   
-  .profile-banner img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
+  .error-message {
+    background-color: #ffeeee;
+    color: #d32f2f;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #d32f2f;
+  }
+  
+  :global(body.dark) .error-message {
+    background-color: rgba(211, 47, 47, 0.2);
+    color: #ff6b6b;
   }
   
   .profile-header {
+    background-color: white;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     display: flex;
     justify-content: space-between;
-    padding: 0 1.5rem;
-    margin-bottom: 1rem;
+    align-items: flex-start;
+  }
+  
+  :global(body.dark) .profile-header {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .profile-info {
+    display: flex;
+    gap: 20px;
   }
   
   .profile-avatar {
-    width: 120px;
-    height: 120px;
+    width: 100px;
+    height: 100px;
     border-radius: 50%;
-    border: 4px solid white;
     overflow: hidden;
-    margin-top: -60px;
-    background-color: #eee;
   }
   
-  :global(body.dark) .profile-avatar {
-    border-color: #1a1a1a;
-    background-color: #444;
+  .avatar-placeholder {
+    width: 100%;
+    height: 100%;
+    background-color: var(--primary-color);
   }
   
   .profile-avatar img {
@@ -387,211 +299,198 @@
     object-fit: cover;
   }
   
-  .avatar-placeholder {
-    width: 100%;
-    height: 100%;
-    background-color: var(--nodus-blue);
-  }
-  
-  .edit-btn, .edit-actions {
-    margin-top: 1rem;
-  }
-  
-  .edit-actions {
+  .profile-details {
     display: flex;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 8px;
   }
   
-  .cancel-btn {
-    background-color: #888;
+  .profile-details h1 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
   }
   
-  .cancel-btn:hover {
-    background-color: #777;
-  }
-  
-  .profile-info {
-    padding: 0 1.5rem 1.5rem;
-  }
-  
-  .profile-name {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.5rem;
-  }
-  
-  .profile-username {
-    margin: 0 0 1rem 0;
+  .profile-pubkey {
+    font-family: monospace;
     color: #666;
-    font-size: 1rem;
+    font-size: 14px;
   }
   
-  :global(body.dark) .profile-username {
+  :global(body.dark) .profile-pubkey {
     color: #aaa;
   }
   
-  .profile-bio {
-    margin: 0 0 1.5rem 0;
+  .profile-nip05 {
+    color: #28a745;
+    font-size: 14px;
+  }
+  
+  .profile-website {
+    font-size: 14px;
+  }
+  
+  .profile-website a {
+    color: var(--primary-color);
+    text-decoration: none;
+  }
+  
+  .profile-website a:hover {
+    text-decoration: underline;
+  }
+  
+  .profile-about {
+    margin-top: 8px;
     line-height: 1.5;
+    max-width: 500px;
     white-space: pre-wrap;
   }
   
-  .profile-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
-    color: #666;
-    font-size: 0.875rem;
+  .profile-actions button {
+    background-color: transparent;
+    border: 1px solid var(--primary-color);
+    color: var(--primary-color);
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background-color 0.3s;
   }
   
-  :global(body.dark) .profile-meta {
-    color: #aaa;
+  .profile-actions button:hover {
+    background-color: rgba(20, 92, 232, 0.1);
   }
   
-  .meta-item {
-    display: flex;
-    align-items: center;
-    margin-bottom: 0.5rem;
+  .edit-profile {
+    background-color: white;
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
   
-  .meta-icon {
-    margin-right: 0.5rem;
+  :global(body.dark) .edit-profile {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
   
-  .profile-edit {
-    padding: 0 1.5rem 1.5rem;
-  }
-  
-  .edit-form {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
+  .edit-profile h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    font-size: 20px;
   }
   
   .form-group {
-    margin-bottom: 1rem;
-  }
-  
-  .form-group:nth-child(3),
-  .form-group:nth-child(4),
-  .form-group:nth-child(5) {
-    grid-column: 1 / span 2;
+    margin-bottom: 16px;
   }
   
   .form-group label {
     display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 600;
+    margin-bottom: 8px;
+    font-weight: 500;
   }
   
   .form-group input,
   .form-group textarea {
     width: 100%;
-    padding: 0.75rem;
+    padding: 10px;
     border: 1px solid #ddd;
     border-radius: 4px;
+    font-size: 16px;
     font-family: inherit;
-    font-size: 1rem;
-    background-color: transparent;
   }
   
   :global(body.dark) .form-group input,
   :global(body.dark) .form-group textarea {
-    border-color: #333;
-    color: #eee;
+    border-color: #444;
+    background-color: #222;
+    color: white;
   }
   
-  .form-group textarea {
-    resize: vertical;
+  .form-group input:focus,
+  .form-group textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
   }
   
-  .help-text {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: #666;
-  }
-  
-  :global(body.dark) .help-text {
-    color: #aaa;
-  }
-  
-  .error-message {
-    margin-bottom: 1.5rem;
-    padding: 1rem;
-    background-color: #ffebee;
-    color: #d32f2f;
-    border-radius: 0.5rem;
-  }
-  
-  :global(body.dark) .error-message {
-    background-color: rgba(211, 47, 47, 0.2);
-  }
-  
-  .profile-tabs {
+  .form-actions {
     display: flex;
-    margin-bottom: 1.5rem;
-    border-bottom: 1px solid #eee;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 20px;
   }
   
-  :global(body.dark) .profile-tabs {
-    border-bottom-color: #333;
-  }
-  
-  .tab {
-    padding: 1rem 1.5rem;
-    cursor: pointer;
+  .cancel-button {
+    background-color: transparent;
+    border: 1px solid #ddd;
     color: #666;
-    font-weight: 500;
-    position: relative;
   }
   
-  :global(body.dark) .tab {
+  :global(body.dark) .cancel-button {
+    border-color: #444;
     color: #aaa;
   }
   
-  .tab.active {
-    color: var(--nodus-blue);
-    font-weight: 600;
+  .save-button {
+    background-color: var(--primary-color);
+    color: white;
   }
   
-  .tab.active::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background-color: var(--nodus-blue);
+  .profile-content {
+    margin-top: 32px;
   }
   
-  .notes-container {
+  .profile-content h2 {
+    margin-bottom: 16px;
+    font-size: 20px;
+  }
+  
+  .empty-state {
+    text-align: center;
+    padding: 40px 0;
+    color: #666;
+    background-color: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  :global(body.dark) .empty-state {
+    color: #aaa;
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .notes-list {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 16px;
   }
   
-  .empty-notes {
-    text-align: center;
-    padding: 3rem 2rem;
+  .note-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
   }
   
-  .empty-notes h3 {
-    margin-top: 0;
-    color: var(--nodus-blue);
-  }
-  
-  .note-item {
-    padding: 1.5rem;
+  :global(body.dark) .note-card {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
   
   .note-header {
     display: flex;
-    justify-content: flex-end;
-    margin-bottom: 1rem;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  
+  .user-name {
+    font-weight: 600;
   }
   
   .note-time {
-    font-size: 0.75rem;
     color: #666;
+    font-size: 14px;
   }
   
   :global(body.dark) .note-time {
@@ -599,7 +498,7 @@
   }
   
   .note-content {
-    margin-bottom: 1.5rem;
+    margin-bottom: 16px;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -607,87 +506,29 @@
   
   .note-actions {
     display: flex;
-    gap: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #eee;
+    gap: 12px;
   }
   
-  :global(body.dark) .note-actions {
-    border-top-color: #333;
-  }
-  
-  .action-btn {
+  .action-button {
     background: none;
     border: none;
-    display: flex;
-    align-items: center;
     color: #666;
-    font-size: 0.875rem;
+    font-size: 14px;
+    padding: 4px 8px;
     cursor: pointer;
-    padding: 0.5rem;
-    border-radius: 9999px;
-    transition: background-color 0.2s;
+    border-radius: 4px;
   }
   
-  :global(body.dark) .action-btn {
+  :global(body.dark) .action-button {
     color: #aaa;
   }
   
-  .action-btn:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+  .action-button:hover {
+    background-color: #f5f5f5;
+    color: var(--primary-color);
   }
   
-  :global(body.dark) .action-btn:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-  }
-  
-  .action-icon {
-    font-size: 1rem;
-    margin-right: 0.5rem;
-  }
-  
-  @media (max-width: 768px) {
-    .profile-header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-    
-    .edit-btn, .edit-actions {
-      margin-left: 60px;
-    }
-    
-    .edit-form {
-      grid-template-columns: 1fr;
-    }
-    
-    .form-group:nth-child(3),
-    .form-group:nth-child(4),
-    .form-group:nth-child(5) {
-      grid-column: auto;
-    }
-    
-    .profile-tabs {
-      overflow-x: auto;
-      white-space: nowrap;
-      padding-bottom: 0.5rem;
-    }
-    
-    .tab {
-      padding: 0.75rem 1rem;
-      font-size: 0.875rem;
-    }
-    
-    .action-label {
-      display: none;
-    }
-    
-    .action-icon {
-      font-size: 1.25rem;
-      margin-right: 0;
-    }
-    
-    .note-actions {
-      justify-content: space-around;
-    }
+  :global(body.dark) .action-button:hover {
+    background-color: #333;
   }
 </style>

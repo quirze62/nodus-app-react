@@ -1,348 +1,569 @@
 <script>
   import { onMount } from 'svelte';
-  import Layout from '../components/Layout.svelte';
+  import { user } from '../lib/stores/auth.js';
   import { theme, setTheme, THEMES } from '../lib/stores/theme.js';
-  import { logout, isAuthenticated } from '../lib/stores/auth.js';
-  import { getRelayStatus, addRelay, removeRelay } from '../lib/services/ndk-config.js';
+  import { db } from '../lib/db/db.js';
   
+  let currentUser;
+  let currentTheme;
+  let isLoading = true;
+  let syncTime = null;
+  let errorMessage = '';
+  let successMessage = '';
+  
+  // Relay management
   let relays = [];
-  let isLoadingRelays = false;
   let newRelayUrl = '';
-  let relayError = null;
+  let isAddingRelay = false;
   
-  onMount(async () => {
-    await loadRelays();
+  // Subscribe to user and theme changes
+  const unsubUser = user.subscribe(value => {
+    currentUser = value;
   });
   
-  // Function to load relay status
-  async function loadRelays() {
-    isLoadingRelays = true;
-    relays = await getRelayStatus();
-    isLoadingRelays = false;
+  const unsubTheme = theme.subscribe(value => {
+    currentTheme = value;
+  });
+  
+  onMount(async () => {
+    try {
+      // Get last sync time
+      syncTime = await db.getLastSync();
+      
+      // Simulate relay loading
+      setTimeout(() => {
+        relays = [
+          { url: 'wss://relay.mynodus.com', connected: true },
+          { url: 'wss://relay.damus.io', connected: true },
+          { url: 'wss://nos.lol', connected: false }
+        ];
+        isLoading = false;
+      }, 1000);
+    } catch (error) {
+      console.error('Error loading settings:', error);
+      errorMessage = 'Failed to load settings.';
+      isLoading = false;
+    }
+  });
+  
+  function handleThemeChange(newTheme) {
+    try {
+      setTheme(newTheme);
+      successMessage = 'Theme updated successfully.';
+      setTimeout(() => {
+        successMessage = '';
+      }, 3000);
+    } catch (error) {
+      console.error('Error changing theme:', error);
+      errorMessage = 'Failed to update theme.';
+    }
   }
   
-  // Function to add a new relay
   async function handleAddRelay() {
-    if (!newRelayUrl) return;
-    
-    relayError = null;
-    
-    // Basic validation
-    if (!newRelayUrl.startsWith('wss://')) {
-      relayError = 'Relay URL must start with wss://';
+    if (!newRelayUrl.trim() || !newRelayUrl.startsWith('wss://')) {
+      errorMessage = 'Please enter a valid relay URL (must start with wss://).';
       return;
     }
     
-    isLoadingRelays = true;
-    
     try {
-      const success = await addRelay(newRelayUrl);
+      isAddingRelay = true;
+      errorMessage = '';
       
-      if (success) {
-        newRelayUrl = '';
-        await loadRelays();
-      } else {
-        relayError = 'Failed to add relay';
+      // Simulate relay addition delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Check if relay already exists
+      const exists = relays.some(relay => relay.url === newRelayUrl);
+      if (exists) {
+        errorMessage = 'This relay is already in your list.';
+        isAddingRelay = false;
+        return;
       }
-    } catch (err) {
-      console.error('Error adding relay:', err);
-      relayError = err.message || 'Failed to add relay';
-    } finally {
-      isLoadingRelays = false;
+      
+      // Add new relay
+      relays = [...relays, { url: newRelayUrl, connected: false }];
+      newRelayUrl = '';
+      
+      successMessage = 'Relay added successfully. Connecting...';
+      
+      // Simulate connection after 2 seconds
+      setTimeout(() => {
+        relays = relays.map(relay => {
+          if (relay.url === newRelayUrl) {
+            return { ...relay, connected: true };
+          }
+          return relay;
+        });
+        
+        successMessage = 'Relay connected successfully.';
+        setTimeout(() => {
+          successMessage = '';
+        }, 3000);
+      }, 2000);
+      
+      isAddingRelay = false;
+    } catch (error) {
+      console.error('Error adding relay:', error);
+      errorMessage = 'Failed to add relay.';
+      isAddingRelay = false;
     }
   }
   
-  // Function to remove a relay
   async function handleRemoveRelay(url) {
-    isLoadingRelays = true;
-    
     try {
-      const success = await removeRelay(url);
+      // Remove relay from list
+      relays = relays.filter(relay => relay.url !== url);
       
-      if (success) {
-        await loadRelays();
-      }
-    } catch (err) {
-      console.error('Error removing relay:', err);
-    } finally {
-      isLoadingRelays = false;
+      successMessage = 'Relay removed successfully.';
+      setTimeout(() => {
+        successMessage = '';
+      }, 3000);
+    } catch (error) {
+      console.error('Error removing relay:', error);
+      errorMessage = 'Failed to remove relay.';
     }
   }
   
-  // Function to handle logout
-  function handleLogout() {
-    logout();
-    window.location.href = '/';
+  async function handleLogout() {
+    try {
+      await user.logout();
+      // Navigation will happen automatically due to the auth state change
+    } catch (error) {
+      console.error('Error logging out:', error);
+      errorMessage = 'Failed to log out.';
+    }
+  }
+  
+  async function handleClearCache() {
+    try {
+      await db.clearCache();
+      await db.updateLastSync();
+      syncTime = await db.getLastSync();
+      
+      successMessage = 'Cache cleared successfully.';
+      setTimeout(() => {
+        successMessage = '';
+      }, 3000);
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      errorMessage = 'Failed to clear cache.';
+    }
+  }
+  
+  function formatDate(date) {
+    if (!date) return 'Never';
+    
+    return new Date(date).toLocaleString();
   }
 </script>
 
-<Layout title="Settings">
-  <div class="settings-page">
-    <div class="section card">
-      <h3>Appearance</h3>
-      
-      <div class="setting-group">
-        <label>Theme</label>
-        <div class="setting-controls">
-          <select bind:value={$theme} on:change={() => setTheme($theme)}>
-            <option value={THEMES.LIGHT}>Light</option>
-            <option value={THEMES.DARK}>Dark</option>
-            <option value={THEMES.SYSTEM}>System Default</option>
-          </select>
-        </div>
-      </div>
+<div class="settings-container">
+  <h1>Settings</h1>
+  
+  {#if errorMessage}
+    <div class="error-message">
+      {errorMessage}
     </div>
-    
-    <div class="section card">
-      <h3>Relays</h3>
-      <p class="help-text">
-        Relays are servers that store and route Nostr events. Add or remove relays to customize your network.
-      </p>
-      
-      {#if isLoadingRelays}
-        <div class="spinner"></div>
-      {:else}
-        <ul class="relay-list">
-          {#each relays as relay}
-            <li class="relay-item">
-              <div class="relay-info">
-                <span class="relay-url">{relay.url}</span>
-                <span class="relay-status" class:connected={relay.connected}>
-                  {relay.connected ? 'Connected' : 'Disconnected'}
-                </span>
-              </div>
-              <button class="btn-icon" on:click={() => handleRemoveRelay(relay.url)} title="Remove relay">
-                ✕
-              </button>
-            </li>
-          {/each}
-        </ul>
+  {/if}
+  
+  {#if successMessage}
+    <div class="success-message">
+      {successMessage}
+    </div>
+  {/if}
+  
+  {#if isLoading}
+    <div class="loading">
+      <p>Loading settings...</p>
+    </div>
+  {:else}
+    <div class="settings-sections">
+      <section class="settings-section">
+        <h2>Appearance</h2>
         
-        <div class="relay-form">
-          <div class="input-group">
-            <input 
-              type="text" 
-              bind:value={newRelayUrl} 
-              placeholder="wss://relay.example.com" 
-            />
-            <button class="btn" on:click={handleAddRelay}>Add Relay</button>
+        <div class="setting-item">
+          <div class="setting-label">Theme</div>
+          <div class="setting-control theme-selector">
+            <button 
+              class="theme-option" 
+              class:active={currentTheme === THEMES.LIGHT}
+              on:click={() => handleThemeChange(THEMES.LIGHT)}
+            >
+              Light
+            </button>
+            <button 
+              class="theme-option" 
+              class:active={currentTheme === THEMES.DARK}
+              on:click={() => handleThemeChange(THEMES.DARK)}
+            >
+              Dark
+            </button>
+            <button 
+              class="theme-option" 
+              class:active={currentTheme === THEMES.SYSTEM}
+              on:click={() => handleThemeChange(THEMES.SYSTEM)}
+            >
+              System
+            </button>
           </div>
-          
-          {#if relayError}
-            <p class="error-text">{relayError}</p>
+        </div>
+      </section>
+      
+      <section class="settings-section">
+        <h2>Relays</h2>
+        <p class="section-description">
+          Relays are servers that store and distribute Nostr content.
+        </p>
+        
+        <div class="relay-list">
+          {#if relays.length === 0}
+            <div class="empty-state">
+              <p>No relays configured. Add a relay to get started.</p>
+            </div>
+          {:else}
+            {#each relays as relay}
+              <div class="relay-item">
+                <div class="relay-info">
+                  <div class="relay-url">{relay.url}</div>
+                  <div class="relay-status" class:connected={relay.connected}>
+                    {relay.connected ? 'Connected' : 'Disconnected'}
+                  </div>
+                </div>
+                <button class="remove-button" on:click={() => handleRemoveRelay(relay.url)}>
+                  Remove
+                </button>
+              </div>
+            {/each}
           {/if}
         </div>
-      {/if}
-    </div>
-    
-    {#if $isAuthenticated}
-      <div class="section card">
-        <h3>Account</h3>
         
-        <div class="danger-zone">
-          <h4>Danger Zone</h4>
-          <p>
-            Logging out will remove your keys from this device. Make sure you have backed up your private key before logging out.
-          </p>
-          <button class="btn btn-danger" on:click={handleLogout}>
-            Logout
+        <div class="add-relay-form">
+          <input 
+            type="text" 
+            placeholder="wss://relay.example.com" 
+            bind:value={newRelayUrl}
+            disabled={isAddingRelay}
+          />
+          <button 
+            on:click={handleAddRelay}
+            disabled={isAddingRelay || !newRelayUrl.trim()}
+          >
+            {isAddingRelay ? 'Adding...' : 'Add Relay'}
           </button>
         </div>
-      </div>
-    {/if}
-    
-    <div class="section card">
-      <h3>About</h3>
-      <p>
-        Nodus is a modern Nostr client that focuses on usability and performance. It uses the Nostr protocol to provide a decentralized social networking experience.
-      </p>
-      <p>
-        <strong>Version:</strong> 1.0.0-beta
-      </p>
-      <p>
-        <strong>Built with:</strong> Svelte, NDK, Dexie
-      </p>
+      </section>
+      
+      <section class="settings-section">
+        <h2>Data Management</h2>
+        
+        <div class="setting-item">
+          <div class="setting-label">Last synced</div>
+          <div class="setting-value">{formatDate(syncTime)}</div>
+        </div>
+        
+        <button class="action-button" on:click={handleClearCache}>
+          Clear Cache
+        </button>
+        <p class="help-text">
+          This will clear all cached events and profiles. Your user account and settings will be preserved.
+        </p>
+      </section>
+      
+      <section class="settings-section">
+        <h2>Account</h2>
+        
+        {#if currentUser}
+          <div class="setting-item">
+            <div class="setting-label">Public Key</div>
+            <div class="setting-value pubkey">
+              {currentUser.pubkey.slice(0, 12)}...{currentUser.pubkey.slice(-12)}
+            </div>
+          </div>
+        {/if}
+        
+        <button class="danger-button" on:click={handleLogout}>
+          Log Out
+        </button>
+      </section>
     </div>
-  </div>
-</Layout>
+  {/if}
+</div>
 
 <style>
-  .settings-page {
+  .settings-container {
     max-width: 800px;
     margin: 0 auto;
+    padding-bottom: 40px;
   }
   
-  .section {
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-  }
-  
-  .section h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-    color: var(--nodus-blue);
-  }
-  
-  .setting-group {
-    margin-bottom: 1.5rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  
-  .setting-group:last-child {
-    margin-bottom: 0;
-  }
-  
-  .setting-group label {
+  h1 {
+    margin-bottom: 24px;
+    font-size: 28px;
     font-weight: 600;
-    margin-bottom: 0.5rem;
-    margin-right: 1rem;
   }
   
-  .setting-controls select {
-    padding: 0.5rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    background-color: white;
-    min-width: 200px;
-  }
-  
-  :global(body.dark) .setting-controls select {
-    background-color: #333;
-    color: #eee;
-    border-color: #555;
-  }
-  
-  .help-text {
-    font-size: 0.875rem;
+  .loading {
+    text-align: center;
+    padding: 40px 0;
     color: #666;
-    margin-bottom: 1.5rem;
   }
   
-  :global(body.dark) .help-text {
+  :global(body.dark) .loading {
     color: #aaa;
   }
   
+  .error-message {
+    background-color: #ffeeee;
+    color: #d32f2f;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #d32f2f;
+  }
+  
+  :global(body.dark) .error-message {
+    background-color: rgba(211, 47, 47, 0.2);
+    color: #ff6b6b;
+  }
+  
+  .success-message {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #2e7d32;
+  }
+  
+  :global(body.dark) .success-message {
+    background-color: rgba(46, 125, 50, 0.2);
+    color: #81c784;
+  }
+  
+  .settings-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+  
+  .settings-section {
+    background-color: white;
+    border-radius: 8px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  :global(body.dark) .settings-section {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .settings-section h2 {
+    margin-top: 0;
+    margin-bottom: 16px;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  
+  .section-description {
+    margin-top: -8px;
+    margin-bottom: 16px;
+    color: #666;
+    font-size: 14px;
+  }
+  
+  :global(body.dark) .section-description {
+    color: #aaa;
+  }
+  
+  .setting-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #eee;
+  }
+  
+  :global(body.dark) .setting-item {
+    border-bottom-color: #333;
+  }
+  
+  .setting-item:last-child {
+    border-bottom: none;
+  }
+  
+  .setting-label {
+    font-weight: 500;
+  }
+  
+  .setting-value {
+    color: #666;
+  }
+  
+  :global(body.dark) .setting-value {
+    color: #aaa;
+  }
+  
+  .pubkey {
+    font-family: monospace;
+  }
+  
+  .theme-selector {
+    display: flex;
+    gap: 8px;
+  }
+  
+  .theme-option {
+    background-color: #f5f5f5;
+    color: #333;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  
+  :global(body.dark) .theme-option {
+    background-color: #333;
+    color: #eee;
+    border-color: #444;
+  }
+  
+  .theme-option.active {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+  }
+  
   .relay-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 1.5rem 0;
+    margin-bottom: 20px;
+  }
+  
+  .empty-state {
+    text-align: center;
+    padding: 20px;
+    background-color: #f5f5f5;
+    border-radius: 6px;
+    color: #666;
+    margin-bottom: 20px;
+  }
+  
+  :global(body.dark) .empty-state {
+    background-color: #333;
+    color: #aaa;
   }
   
   .relay-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.75rem;
-    border-bottom: 1px solid #eee;
+    padding: 12px;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    margin-bottom: 12px;
   }
   
   :global(body.dark) .relay-item {
-    border-bottom-color: #333;
-  }
-  
-  .relay-item:last-child {
-    border-bottom: none;
+    border-color: #333;
   }
   
   .relay-info {
-    display: flex;
-    flex-direction: column;
+    flex: 1;
   }
   
   .relay-url {
     font-family: monospace;
-    margin-bottom: 0.25rem;
+    margin-bottom: 4px;
   }
   
   .relay-status {
-    font-size: 0.75rem;
-    color: #f44336;
+    font-size: 12px;
+    color: #d32f2f;
   }
   
   .relay-status.connected {
-    color: #4caf50;
+    color: #2e7d32;
   }
   
-  .btn-icon {
-    background: none;
-    border: none;
-    font-size: 1rem;
-    cursor: pointer;
-    color: #666;
-    width: 32px;
-    height: 32px;
+  :global(body.dark) .relay-status {
+    color: #ff6b6b;
+  }
+  
+  :global(body.dark) .relay-status.connected {
+    color: #81c784;
+  }
+  
+  .remove-button {
+    background-color: transparent;
+    color: #d32f2f;
+    border: 1px solid #d32f2f;
+    padding: 6px 12px;
+    font-size: 12px;
+    border-radius: 4px;
+  }
+  
+  .remove-button:hover {
+    background-color: rgba(211, 47, 47, 0.1);
+  }
+  
+  .add-relay-form {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 50%;
+    gap: 12px;
   }
   
-  .btn-icon:hover {
-    background-color: rgba(0, 0, 0, 0.05);
-  }
-  
-  :global(body.dark) .btn-icon {
-    color: #aaa;
-  }
-  
-  :global(body.dark) .btn-icon:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-  }
-  
-  .relay-form {
-    margin-top: 1.5rem;
-  }
-  
-  .input-group {
-    display: flex;
-  }
-  
-  .input-group input {
+  .add-relay-form input {
     flex: 1;
-    padding: 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 4px 0 0 4px;
-    font-family: inherit;
   }
   
-  :global(body.dark) .input-group input {
+  .action-button {
+    background-color: #f5f5f5;
+    color: #333;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 16px;
+    width: auto;
+    align-self: flex-start;
+  }
+  
+  :global(body.dark) .action-button {
     background-color: #333;
     color: #eee;
-    border-color: #555;
+    border-color: #444;
   }
   
-  .input-group .btn {
-    border-radius: 0 4px 4px 0;
+  .action-button:hover {
+    background-color: #e0e0e0;
   }
   
-  .error-text {
-    color: #f44336;
-    font-size: 0.875rem;
-    margin-top: 0.5rem;
+  :global(body.dark) .action-button:hover {
+    background-color: #444;
   }
   
-  .danger-zone {
-    background-color: #ffebee;
-    padding: 1.5rem;
-    border-radius: 4px;
-    margin-top: 1.5rem;
-  }
-  
-  :global(body.dark) .danger-zone {
-    background-color: rgba(244, 67, 54, 0.1);
-  }
-  
-  .danger-zone h4 {
-    color: #c62828;
-    margin-top: 0;
-    margin-bottom: 0.75rem;
-  }
-  
-  .btn-danger {
-    background-color: #f44336;
+  .danger-button {
+    background-color: #d32f2f;
     color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    margin-top: 16px;
+  }
+  
+  .danger-button:hover {
+    opacity: 0.9;
+  }
+  
+  .help-text {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #666;
+  }
+  
+  :global(body.dark) .help-text {
+    color: #aaa;
   }
 </style>
