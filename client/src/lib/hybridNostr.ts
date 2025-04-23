@@ -290,17 +290,51 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
   logger.info(`Creating reaction to event ${eventId} (hybrid mode)`);
   
   if (!currentUser) {
-    logger.error('No current user');
+    logger.error('No current user when trying to create reaction');
     return null;
   }
   
   try {
-    // Create a reaction event with the "e" tag pointing to the original event
+    // First, try to fetch the original event to get its author's pubkey
+    const filter = {
+      ids: [eventId]
+    };
+    
+    // Get the event we're reacting to
+    let originalEvent = null;
+    try {
+      const events = await ndk.fetchEventsWithFilter(filter);
+      if (events && events.length > 0) {
+        originalEvent = events[0];
+      } else {
+        logger.warn(`Could not find original event ${eventId} to react to`);
+      }
+    } catch (e) {
+      logger.warn(`Error fetching original event ${eventId}:`, e);
+    }
+    
+    // Create the reaction tags
     const tags = [
-      ["e", eventId], // Reference to the original event
+      ["e", eventId, "", "root"], // Reference to the original event
     ];
     
-    // Try to publish using NDK
+    // Add the p tag if we have the original event's pubkey
+    if (originalEvent) {
+      tags.push(["p", originalEvent.pubkey]); // Add p tag referencing the event author
+      logger.info(`Adding p tag for author ${originalEvent.pubkey} to reaction`);
+    }
+    
+    // Try to publish using NDK with explicit check for relay connections
+    const ndk_instance = await getNDK();
+    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter(r => r.connected);
+    
+    if (connectedRelays.length === 0) {
+      logger.warn('No connected relays for reaction, attempting to reconnect');
+      await ndk_instance.connect();
+    }
+    
+    // Publish the reaction
+    logger.info(`Publishing reaction to ${connectedRelays.length} relays`);
     return await ndk.publishEvent(7, content, tags); // Kind 7 = reaction
   } catch (error) {
     logger.error('Error creating reaction:', error);
@@ -313,20 +347,55 @@ export const repostNote = async (eventId: string, eventPubkey: string): Promise<
   logger.info(`Reposting event ${eventId} (hybrid mode)`);
   
   if (!currentUser) {
-    logger.error('No current user');
+    logger.error('No current user when trying to repost');
     return null;
   }
   
   try {
+    // First, try to fetch the original event for proper tagging
+    const filter = {
+      ids: [eventId]
+    };
+    
+    // Get the event we're reposting
+    let originalEvent = null;
+    try {
+      const events = await ndk.fetchEventsWithFilter(filter);
+      if (events && events.length > 0) {
+        originalEvent = events[0];
+      } else {
+        logger.warn(`Could not find original event ${eventId} to repost`);
+      }
+    } catch (e) {
+      logger.warn(`Error fetching original event ${eventId}:`, e);
+    }
+    
     // Create a repost event with the "e" tag pointing to the original event
     // and "p" tag pointing to the author of the original event
     const tags = [
-      ["e", eventId], // Reference to the original event
+      ["e", eventId, "", "mention"], // Reference to the original event
       ["p", eventPubkey], // Reference to the original author
     ];
     
-    // Try to publish using NDK
-    return await ndk.publishEvent(6, "", tags); // Kind 6 = repost
+    // If we have the original event, include its content for better relay handling
+    let content = "";
+    if (originalEvent) {
+      // Create a quote format: include event ID, author, and content
+      content = `nostr:${originalEvent.id}`;
+    }
+    
+    // Try to publish using NDK with explicit check for relay connections
+    const ndk_instance = await getNDK();
+    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter(r => r.connected);
+    
+    if (connectedRelays.length === 0) {
+      logger.warn('No connected relays for repost, attempting to reconnect');
+      await ndk_instance.connect();
+    }
+    
+    // Publish the repost
+    logger.info(`Publishing repost to ${connectedRelays.length} relays`);
+    return await ndk.publishEvent(6, content, tags); // Kind 6 = repost
   } catch (error) {
     logger.error('Error reposting note:', error);
     return null;

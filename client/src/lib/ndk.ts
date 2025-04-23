@@ -178,6 +178,7 @@ export const publishEvent = async (kind: number, content: string, tags: string[]
     const ndk = await getNDK();
     
     if (!ndk.signer) {
+      logger.error("Not signed in when trying to publish event");
       throw new Error("Not signed in");
     }
     
@@ -187,37 +188,50 @@ export const publishEvent = async (kind: number, content: string, tags: string[]
     event.content = content;
     event.tags = tags;
     
-    try {
-      // Check connection status before publishing
-      const relayStatus = Array.from(ndk.pool.relays.values())
-        .filter(relay => relay.connected);
-      
-      if (relayStatus.length === 0) {
-        logger.error('No connected relays to publish to');
-        throw new Error('No connected relays');
+    // Check if we have connected relays
+    const relayStatus = Array.from(ndk.pool.relays.values())
+      .filter(relay => relay.connected);
+    
+    if (relayStatus.length === 0) {
+      logger.error('No connected relays to publish to - attempting to reconnect');
+      // Try to reconnect
+      try {
+        await ndk.connect();
+        // Check again after connection attempt
+        const connectedRelays = Array.from(ndk.pool.relays.values()).filter(r => r.connected);
+        if (connectedRelays.length === 0) {
+          throw new Error('Failed to connect to any relays');
+        }
+        logger.info(`Reconnected to ${connectedRelays.length} relays`);
+      } catch (connError) {
+        logger.error('Failed to reconnect to relays:', connError);
+        throw new Error('No connected relays for publishing');
       }
-      
-      logger.info(`Publishing event kind ${kind} to ${relayStatus.length} relays`);
-      
-      // Sign and publish with timeout
-      const publishPromise = event.publish();
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Publish timed out")), 10000); // 10 second timeout
+    }
+    
+    logger.info(`Publishing event kind ${kind} to ${relayStatus.length} relays`);
+    
+    try {
+      // Sign and publish with timeout to prevent hanging
+      await new Promise<void>(async (resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error("Publish timed out after 10 seconds"));
+        }, 10000);
+        
+        try {
+          await event.sign();
+          await event.publish();
+          clearTimeout(timeoutId);
+          resolve();
+        } catch (e) {
+          clearTimeout(timeoutId);
+          reject(e);
+        }
       });
       
-      await Promise.race([publishPromise, timeoutPromise]);
       logger.info(`Successfully published event kind ${kind}`);
     } catch (e) {
       logger.error(`Failed to publish event: ${e}`);
-      
-      // If we're not connected to relays, try to connect again
-      try {
-        logger.info('Trying to reconnect to relays...');
-        await ndk.connect();
-      } catch (connError) {
-        logger.error('Failed to reconnect:', connError);
-      }
-      
       throw e;
     }
     
@@ -237,7 +251,7 @@ export const publishEvent = async (kind: number, content: string, tags: string[]
     
     return nostrEvent;
   } catch (error) {
-    console.error(`Error publishing event kind ${kind}:`, error);
+    logger.error(`Error publishing event kind ${kind}:`, error);
     return null;
   }
 };
