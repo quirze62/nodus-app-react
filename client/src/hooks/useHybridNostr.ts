@@ -13,6 +13,13 @@ interface UseHybridNostrReturn {
   getRelays: () => Promise<{url: string, connected: boolean}[]>;
   addRelay: (url: string) => Promise<boolean>;
   removeRelay: (url: string) => Promise<boolean>;
+  // Social interaction methods
+  createReaction: (eventId: string, content?: string) => Promise<NostrEvent | null>;
+  repostNote: (eventId: string, eventPubkey: string) => Promise<NostrEvent | null>;
+  replyToNote: (eventId: string, eventPubkey: string, rootId: string | null, content: string, additionalTags?: string[][]) => Promise<NostrEvent | null>;
+  getReactions: (eventId: string) => Promise<NostrEvent[]>;
+  getReposts: (eventId: string) => Promise<NostrEvent[]>;
+  getReplies: (eventId: string) => Promise<NostrEvent[]>;
   subscribeToNotes: (
     onEvent: (event: NostrEvent) => void,
     onEose?: () => void,
@@ -214,6 +221,96 @@ export function useHybridNostr(): UseHybridNostrReturn {
     }
   }, []);
   
+  // Create a reaction (like)
+  const createReaction = useCallback(async (eventId: string, content: string = "+"): Promise<NostrEvent | null> => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const event = await hybridNostr.createReaction(eventId, content);
+      return event;
+    } catch (error) {
+      logger.error('Error creating reaction:', error);
+      setError('Failed to create reaction');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // Repost a note
+  const repostNote = useCallback(async (eventId: string, eventPubkey: string): Promise<NostrEvent | null> => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const event = await hybridNostr.repostNote(eventId, eventPubkey);
+      return event;
+    } catch (error) {
+      logger.error('Error reposting note:', error);
+      setError('Failed to repost note');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // Reply to a note
+  const replyToNote = useCallback(async (
+    eventId: string, 
+    eventPubkey: string, 
+    rootId: string | null, 
+    content: string, 
+    additionalTags: string[][] = []
+  ): Promise<NostrEvent | null> => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const event = await hybridNostr.replyToNote(eventId, eventPubkey, rootId, content, additionalTags);
+      return event;
+    } catch (error) {
+      logger.error('Error replying to note:', error);
+      setError('Failed to reply to note');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  
+  // Get reactions
+  const getReactions = useCallback(async (eventId: string): Promise<NostrEvent[]> => {
+    try {
+      return await hybridNostr.getReactions(eventId);
+    } catch (error) {
+      logger.error('Error getting reactions:', error);
+      setError('Failed to get reactions');
+      return [];
+    }
+  }, []);
+  
+  // Get reposts
+  const getReposts = useCallback(async (eventId: string): Promise<NostrEvent[]> => {
+    try {
+      return await hybridNostr.getReposts(eventId);
+    } catch (error) {
+      logger.error('Error getting reposts:', error);
+      setError('Failed to get reposts');
+      return [];
+    }
+  }, []);
+  
+  // Get replies
+  const getReplies = useCallback(async (eventId: string): Promise<NostrEvent[]> => {
+    try {
+      return await hybridNostr.getReplies(eventId);
+    } catch (error) {
+      logger.error('Error getting replies:', error);
+      setError('Failed to get replies');
+      return [];
+    }
+  }, []);
+
   return {
     loadNotes,
     postNote,
@@ -224,6 +321,13 @@ export function useHybridNostr(): UseHybridNostrReturn {
     getRelays,
     addRelay,
     removeRelay,
+    // Social interaction methods
+    createReaction,
+    repostNote,
+    replyToNote,
+    getReactions,
+    getReposts,
+    getReplies,
     subscribeToNotes,
     isLoading,
     error
