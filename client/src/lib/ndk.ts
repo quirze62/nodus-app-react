@@ -171,9 +171,9 @@ export const updateUserProfile = async (pubkey: string, profile: NostrProfile): 
 };
 
 /**
- * Create and publish a text note
+ * Publish a generic Nostr event with the specified kind
  */
-export const publishNote = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
+export const publishEvent = async (kind: number, content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
   try {
     const ndk = await getNDK();
     
@@ -183,7 +183,7 @@ export const publishNote = async (content: string, tags: string[][] = []): Promi
     
     // Create event
     const event = new NDKEvent(ndk);
-    event.kind = EventKind.TEXT_NOTE;
+    event.kind = kind;
     event.content = content;
     event.tags = tags;
     
@@ -206,9 +206,16 @@ export const publishNote = async (content: string, tags: string[][] = []): Promi
     
     return nostrEvent;
   } catch (error) {
-    console.error("Error publishing note:", error);
+    console.error(`Error publishing event kind ${kind}:`, error);
     return null;
   }
+};
+
+/**
+ * Publish a text note (kind 1)
+ */
+export const publishNote = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
+  return publishEvent(EventKind.TEXT_NOTE, content, tags);
 };
 
 /**
@@ -421,7 +428,8 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
  */
 export const subscribeToNotes = (
   onEvent: (event: NostrEvent) => void,
-  onEose?: () => void
+  onEose?: () => void,
+  customFilter?: { authors?: string[], kinds?: number[] }
 ): (() => void) => {
   try {
     const ndk = ndkInstance;
@@ -432,8 +440,13 @@ export const subscribeToNotes = (
     
     // Create filter for text notes
     const filter: NDKFilter = { 
-      kinds: [EventKind.TEXT_NOTE]
+      kinds: customFilter?.kinds || [EventKind.TEXT_NOTE]
     };
+    
+    // Add authors to filter if provided
+    if (customFilter?.authors && customFilter.authors.length > 0) {
+      filter.authors = customFilter.authors;
+    }
     
     // Subscribe to events
     const subscription = ndk.subscribe(filter);
@@ -469,6 +482,40 @@ export const subscribeToNotes = (
   } catch (error) {
     console.error("Error setting up note subscription:", error);
     return () => {}; // Return empty unsubscribe function
+  }
+};
+
+/**
+ * Fetch events with a custom filter
+ */
+export const fetchEventsWithFilter = async (filter: NDKFilter): Promise<NostrEvent[]> => {
+  try {
+    const ndk = await getNDK();
+    logger.info(`Fetching events with filter: ${JSON.stringify(filter)}`);
+    
+    // Fetch events
+    const events = await ndk.fetchEvents(filter);
+    
+    // Convert to our format
+    const nostrEvents: NostrEvent[] = Array.from(events).map(event => ({
+      id: event.id,
+      pubkey: event.pubkey,
+      created_at: event.created_at,
+      kind: event.kind,
+      tags: event.tags,
+      content: event.content,
+      sig: event.sig || ""
+    }));
+    
+    // Store events in local DB
+    for (const event of nostrEvents) {
+      db.storeEvent(event).catch(e => logger.error("Error storing fetched event:", e));
+    }
+    
+    return nostrEvents;
+  } catch (error) {
+    logger.error("Error fetching events with filter:", error);
+    return [];
   }
 };
 
