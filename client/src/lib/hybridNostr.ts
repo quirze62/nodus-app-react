@@ -325,8 +325,8 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
     }
     
     // Try to publish using NDK with explicit check for relay connections
-    const ndk_instance = await getNDK();
-    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter(r => r.connected);
+    const ndk_instance = await ndk.getNDK();
+    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
     
     if (connectedRelays.length === 0) {
       logger.warn('No connected relays for reaction, attempting to reconnect');
@@ -385,8 +385,8 @@ export const repostNote = async (eventId: string, eventPubkey: string): Promise<
     }
     
     // Try to publish using NDK with explicit check for relay connections
-    const ndk_instance = await getNDK();
-    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter(r => r.connected);
+    const ndk_instance = await ndk.getNDK();
+    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
     
     if (connectedRelays.length === 0) {
       logger.warn('No connected relays for repost, attempting to reconnect');
