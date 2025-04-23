@@ -1,417 +1,290 @@
 <script>
   import { onMount } from 'svelte';
-  import { navigate } from 'svelte-routing';
-  import Layout from '../components/Layout.svelte';
-  import { loadNotes, events, isLoading, error } from '../lib/services/nostr-event-service.js';
-  import { getProfile, cachedProfiles } from '../lib/services/profile-service.js';
-  import { isAuthenticated, user } from '../lib/stores/auth.js';
-  import { formatDistanceToNow } from 'date-fns';
+  import { user } from '../lib/stores/auth.js';
   
-  // State for new post
-  let newPostContent = '';
-  let isPostingNote = false;
-  let postError = '';
+  let currentUser;
+  let notes = [];
+  let isLoading = true;
+  let errorMessage = '';
+  let newNoteContent = '';
   
-  // Function to load the timeline
-  async function loadTimeline() {
-    try {
-      await loadNotes(50);
-    } catch (err) {
-      console.error('[ERROR] Failed to load timeline:', err);
-    }
-  }
+  // Subscribe to user changes
+  const unsubscribe = user.subscribe(value => {
+    currentUser = value;
+  });
   
-  // Function to format date
-  function formatDate(timestamp) {
-    if (!timestamp) return '';
-    
-    // Convert from seconds to milliseconds if needed
-    const date = new Date(timestamp * 1000);
-    
-    return formatDistanceToNow(date, { addSuffix: true });
-  }
-  
-  // Function to get profile for a note
-  async function getProfileForNote(pubkey) {
-    if (!pubkey) return;
-    
-    try {
-      await getProfile(pubkey);
-    } catch (err) {
-      console.error('[ERROR] Failed to get profile:', err);
-    }
-  }
-  
-  // Load the timeline on mount
   onMount(async () => {
-    await loadTimeline();
-    
-    // For each note, load the author's profile
-    for (const note of $events) {
-      getProfileForNote(note.pubkey);
+    try {
+      // Simulate loading notes
+      setTimeout(() => {
+        notes = [
+          {
+            id: '1',
+            pubkey: 'test-pubkey',
+            content: 'Welcome to Nodus, a private Nostr community!',
+            created_at: new Date().getTime() / 1000 - 3600
+          },
+          {
+            id: '2',
+            pubkey: 'test-pubkey',
+            content: 'This is a sample note. The real app will connect to Nostr relays.',
+            created_at: new Date().getTime() / 1000 - 1800
+          }
+        ];
+        isLoading = false;
+      }, 1000);
+    } catch (error) {
+      console.error('Error loading notes:', error);
+      errorMessage = 'Failed to load notes. Please try again later.';
+      isLoading = false;
     }
   });
   
-  // Function to get author name
-  function getAuthorName(pubkey) {
-    if (!pubkey) return 'Unknown';
-    
-    const profiles = $cachedProfiles;
-    if (profiles.has(pubkey)) {
-      const profile = profiles.get(pubkey);
-      return profile.displayName || profile.name || 'Unknown User';
-    }
-    
-    // Start loading profile if not already in cache
-    getProfileForNote(pubkey);
-    
-    return 'Unknown User';
+  function formatTime(timestamp) {
+    const date = new Date(timestamp * 1000);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
   
-  // Function to get author picture
-  function getAuthorPicture(pubkey) {
-    if (!pubkey) return '';
+  async function handlePostNote() {
+    if (!newNoteContent.trim()) return;
     
-    const profiles = $cachedProfiles;
-    if (profiles.has(pubkey)) {
-      return profiles.get(pubkey).picture || '';
+    try {
+      // In a real implementation, this would publish to relays
+      const newNote = {
+        id: Date.now().toString(),
+        pubkey: currentUser.pubkey,
+        content: newNoteContent,
+        created_at: Math.floor(Date.now() / 1000)
+      };
+      
+      notes = [newNote, ...notes];
+      newNoteContent = '';
+    } catch (error) {
+      console.error('Error posting note:', error);
+      errorMessage = 'Failed to post your note. Please try again.';
     }
-    
-    return '';
-  }
-  
-  // Function to format pubkey
-  function formatPubkey(pubkey) {
-    if (!pubkey) return '';
-    return `${pubkey.substring(0, 6)}...${pubkey.substring(pubkey.length - 6)}`;
   }
 </script>
 
-<Layout title="Home" isLoading={$isLoading}>
-  <div class="timeline">
-    {#if $isAuthenticated}
-      <div class="compose-container card">
-        <div class="compose-header">
-          <h3>What's on your mind?</h3>
-        </div>
-        
-        <div class="compose-body">
-          <textarea 
-            bind:value={newPostContent} 
-            placeholder="Share something with the Nostr community..."
-            rows="3"
-          ></textarea>
-        </div>
-        
-        {#if postError}
-          <div class="error-message">
-            <p>{postError}</p>
-          </div>
-        {/if}
-        
-        <div class="compose-footer">
-          <button 
-            class="btn post-btn" 
-            disabled={!newPostContent.trim() || isPostingNote}
-          >
-            {isPostingNote ? 'Posting...' : 'Post'}
-          </button>
-        </div>
+<div class="home-container">
+  <h1>Home Feed</h1>
+  
+  {#if errorMessage}
+    <div class="error-message">
+      {errorMessage}
+    </div>
+  {/if}
+  
+  <div class="compose-note">
+    <textarea
+      placeholder="What's on your mind?"
+      bind:value={newNoteContent}
+      rows="3"
+    ></textarea>
+    <button on:click={handlePostNote}>Post</button>
+  </div>
+  
+  <div class="notes-list">
+    {#if isLoading}
+      <div class="loading">
+        <p>Loading notes...</p>
       </div>
-    {/if}
-    
-    {#if $error}
-      <div class="error-message card">
-        <p>{$error}</p>
-        <button class="btn" on:click={loadTimeline}>Retry</button>
+    {:else if notes.length === 0}
+      <div class="empty-state">
+        <p>No notes to display. Be the first to post!</p>
       </div>
-    {/if}
-    
-    {#if !$isLoading && $events.length === 0}
-      <div class="empty-timeline card">
-        <h3>No posts to show</h3>
-        <p>When you connect to relays and follow users, their posts will appear here.</p>
-        
-        {#if !$isAuthenticated}
-          <button class="btn" on:click={() => navigate('/login')}>
-            Login to Nodus
-          </button>
-        {/if}
-      </div>
-    {/if}
-    
-    <div class="posts-list">
-      {#each $events as note}
-        <div class="post-item card">
-          <div class="post-header">
-            <div class="author-avatar">
-              {#if getAuthorPicture(note.pubkey)}
-                <img src={getAuthorPicture(note.pubkey)} alt="Avatar" />
-              {:else}
-                <div class="avatar-placeholder"></div>
-              {/if}
+    {:else}
+      {#each notes as note}
+        <div class="note-card">
+          <div class="note-header">
+            <div class="user-info">
+              <div class="avatar"></div>
+              <div class="user-name">
+                {note.pubkey === currentUser?.pubkey ? 'You' : 'User ' + note.pubkey.slice(0, 8)}
+              </div>
             </div>
-            
-            <div class="author-info">
-              <div class="author-name">{getAuthorName(note.pubkey)}</div>
-              <div class="author-pubkey">{formatPubkey(note.pubkey)}</div>
-            </div>
-            
-            <div class="post-time">
-              {formatDate(note.created_at)}
+            <div class="note-time">
+              {formatTime(note.created_at)}
             </div>
           </div>
-          
-          <div class="post-content">
+          <div class="note-content">
             {note.content}
           </div>
-          
-          <div class="post-actions">
-            <button class="action-btn">
-              <span class="action-icon">💬</span>
-              <span class="action-label">Reply</span>
-            </button>
-            
-            <button class="action-btn">
-              <span class="action-icon">🔄</span>
-              <span class="action-label">Repost</span>
-            </button>
-            
-            <button class="action-btn">
-              <span class="action-icon">❤️</span>
-              <span class="action-label">Like</span>
-            </button>
+          <div class="note-actions">
+            <button class="action-button">Like</button>
+            <button class="action-button">Repost</button>
+            <button class="action-button">Reply</button>
           </div>
         </div>
       {/each}
-    </div>
+    {/if}
   </div>
-</Layout>
+</div>
 
 <style>
-  .timeline {
+  .home-container {
     max-width: 600px;
     margin: 0 auto;
   }
   
-  .compose-container {
-    margin-bottom: 2rem;
-  }
-  
-  .compose-header {
-    padding: 1rem 1.5rem;
-    border-bottom: 1px solid #eee;
-  }
-  
-  :global(body.dark) .compose-header {
-    border-bottom-color: #333;
-  }
-  
-  .compose-header h3 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-  
-  .compose-body {
-    padding: 1.5rem;
-  }
-  
-  .compose-body textarea {
-    width: 100%;
-    padding: 1rem;
-    border: 1px solid #eee;
-    border-radius: 0.5rem;
-    font-family: inherit;
-    font-size: 1rem;
-    resize: vertical;
-    background-color: transparent;
-  }
-  
-  :global(body.dark) .compose-body textarea {
-    border-color: #333;
-    color: #eee;
-  }
-  
-  .compose-footer {
-    padding: 0 1.5rem 1.5rem;
-    display: flex;
-    justify-content: flex-end;
-  }
-  
-  .post-btn {
-    padding: 0.5rem 2rem;
+  h1 {
+    margin-bottom: 20px;
+    font-size: 24px;
+    font-weight: 600;
   }
   
   .error-message {
-    margin: 1rem 1.5rem;
-    padding: 1rem;
-    background-color: #ffebee;
+    background-color: #ffeeee;
     color: #d32f2f;
-    border-radius: 0.5rem;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #d32f2f;
   }
   
   :global(body.dark) .error-message {
     background-color: rgba(211, 47, 47, 0.2);
+    color: #ff6b6b;
   }
   
-  .empty-timeline {
-    text-align: center;
-    padding: 3rem 2rem;
-  }
-  
-  .empty-timeline h3 {
-    margin-top: 0;
-    color: var(--nodus-blue);
-  }
-  
-  .empty-timeline p {
-    margin-bottom: 2rem;
-    color: #666;
-  }
-  
-  :global(body.dark) .empty-timeline p {
-    color: #aaa;
-  }
-  
-  .posts-list {
+  .compose-note {
+    background-color: white;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     display: flex;
     flex-direction: column;
-    gap: 1rem;
   }
   
-  .post-item {
-    padding: 1.5rem;
+  :global(body.dark) .compose-note {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
   
-  .post-header {
+  textarea {
+    width: 100%;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 12px;
+    font-family: inherit;
+    font-size: 16px;
+    resize: vertical;
+  }
+  
+  :global(body.dark) textarea {
+    border-color: #444;
+    background-color: #222;
+    color: white;
+  }
+  
+  textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+  
+  .compose-note button {
+    align-self: flex-end;
+    width: auto;
+    padding: 8px 24px;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 20px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  
+  .loading, .empty-state {
+    text-align: center;
+    padding: 40px 0;
+    color: #666;
+  }
+  
+  :global(body.dark) .loading,
+  :global(body.dark) .empty-state {
+    color: #aaa;
+  }
+  
+  .note-card {
+    background-color: white;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  :global(body.dark) .note-card {
+    background-color: var(--bg-dark);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .note-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  
+  .user-info {
     display: flex;
     align-items: center;
-    margin-bottom: 1rem;
   }
   
-  .author-avatar {
-    width: 48px;
-    height: 48px;
+  .avatar {
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
-    overflow: hidden;
-    margin-right: 1rem;
-    background-color: #eee;
+    background-color: var(--primary-color);
+    margin-right: 12px;
   }
   
-  :global(body.dark) .author-avatar {
-    background-color: #444;
-  }
-  
-  .author-avatar img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-  
-  .avatar-placeholder {
-    width: 100%;
-    height: 100%;
-    background-color: var(--nodus-blue);
-  }
-  
-  .author-info {
-    flex: 1;
-  }
-  
-  .author-name {
+  .user-name {
     font-weight: 600;
-    margin-bottom: 0.25rem;
   }
   
-  .author-pubkey {
-    font-size: 0.75rem;
+  .note-time {
     color: #666;
-    font-family: monospace;
+    font-size: 14px;
   }
   
-  :global(body.dark) .author-pubkey {
+  :global(body.dark) .note-time {
     color: #aaa;
   }
   
-  .post-time {
-    font-size: 0.75rem;
-    color: #666;
-  }
-  
-  :global(body.dark) .post-time {
-    color: #aaa;
-  }
-  
-  .post-content {
-    margin-bottom: 1.5rem;
+  .note-content {
+    margin-bottom: 16px;
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
   }
   
-  .post-actions {
+  .note-actions {
     display: flex;
-    gap: 1.5rem;
-    padding-top: 1rem;
-    border-top: 1px solid #eee;
+    gap: 12px;
   }
   
-  :global(body.dark) .post-actions {
-    border-top-color: #333;
-  }
-  
-  .action-btn {
+  .action-button {
     background: none;
     border: none;
-    display: flex;
-    align-items: center;
     color: #666;
-    font-size: 0.875rem;
+    font-size: 14px;
+    padding: 4px 8px;
     cursor: pointer;
-    padding: 0.5rem;
-    border-radius: 9999px;
-    transition: background-color 0.2s;
+    border-radius: 4px;
   }
   
-  :global(body.dark) .action-btn {
+  :global(body.dark) .action-button {
     color: #aaa;
   }
   
-  .action-btn:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+  .action-button:hover {
+    background-color: #f5f5f5;
+    color: var(--primary-color);
   }
   
-  :global(body.dark) .action-btn:hover {
-    background-color: rgba(255, 255, 255, 0.05);
-  }
-  
-  .action-icon {
-    font-size: 1rem;
-    margin-right: 0.5rem;
-  }
-  
-  @media (max-width: 768px) {
-    .timeline {
-      max-width: 100%;
-    }
-    
-    .post-item, .compose-container {
-      border-radius: 0;
-      margin-left: -1rem;
-      margin-right: -1rem;
-    }
-    
-    .action-label {
-      display: none;
-    }
-    
-    .action-icon {
-      font-size: 1.25rem;
-      margin-right: 0;
-    }
-    
-    .post-actions {
-      justify-content: space-around;
-    }
+  :global(body.dark) .action-button:hover {
+    background-color: #333;
   }
 </style>

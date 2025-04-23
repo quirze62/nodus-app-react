@@ -6,24 +6,14 @@ export default defineConfig({
   plugins: [svelte()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      '@components': path.resolve(__dirname, './src/components'),
-      '@lib': path.resolve(__dirname, './src/lib'),
-      '@assets': path.resolve(__dirname, './src/assets'),
-      '@routes': path.resolve(__dirname, './src/routes'),
-    }
+      '@': path.resolve(__dirname, 'src'),
+      '@lib': path.resolve(__dirname, 'src/lib'),
+      '@components': path.resolve(__dirname, 'src/components'),
+      '@routes': path.resolve(__dirname, 'src/routes'),
+      '@assets': path.resolve(__dirname, '../attached_assets'),
+    },
   },
   server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:5000',
-        changeOrigin: true,
-      },
-      '/ws': {
-        target: 'ws://localhost:5000',
-        ws: true,
-      }
-    }
+    port: 5173
   }
 });

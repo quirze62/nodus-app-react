@@ -1,330 +1,303 @@
 <script>
   import { onMount } from 'svelte';
-  import { login, generateNewKeys, isLoading, error } from '../lib/stores/auth.js';
-  import Layout from '../components/Layout.svelte';
+  import { user } from '../lib/stores/auth.js';
   import { navigate } from 'svelte-routing';
   
-  let privateKey = '';
-  let showPrivateKey = false;
-  let selectedTab = 'login'; // login or create
+  let nsecInput = '';
+  let isLoading = false;
+  let errorMessage = '';
   
-  // Function to handle login form submission
-  async function handleLogin() {
-    if (!privateKey) return;
-    
-    const success = await login(privateKey);
-    
-    if (success) {
-      // Navigate to home
-      navigate('/');
+  async function handlePrivateKeyLogin() {
+    if (!nsecInput.trim()) {
+      errorMessage = 'Please enter your private key';
+      return;
     }
-  }
-  
-  // Function to create a new user
-  async function handleCreateAccount() {
+    
+    isLoading = true;
+    errorMessage = '';
+    
     try {
-      const user = await generateNewKeys();
-      
-      if (user) {
-        privateKey = user.privateKey;
-        showPrivateKey = true;
+      const success = await user.loginWithPrivateKey(nsecInput);
+      if (success) {
+        navigate('/');
+      } else {
+        errorMessage = 'Login failed. Please check your private key.';
       }
-    } catch (err) {
-      console.error('Failed to create new keys:', err);
+    } catch (error) {
+      console.error('Login error:', error);
+      errorMessage = 'An error occurred during login.';
+    } finally {
+      isLoading = false;
     }
   }
   
-  // Function to toggle tabs
-  function setTab(tab) {
-    selectedTab = tab;
-    // Clear form data and error
-    privateKey = '';
-    showPrivateKey = false;
+  async function handleExtensionLogin() {
+    isLoading = true;
+    errorMessage = '';
+    
+    try {
+      const success = await user.loginWithExtension();
+      if (success) {
+        navigate('/');
+      } else {
+        errorMessage = 'Extension login failed. Make sure your Nostr extension is installed and configured.';
+      }
+    } catch (error) {
+      console.error('Extension login error:', error);
+      errorMessage = 'An error occurred during extension login.';
+    } finally {
+      isLoading = false;
+    }
+  }
+  
+  async function handleGenerateKeys() {
+    isLoading = true;
+    errorMessage = '';
+    
+    try {
+      await user.generateNewKeys();
+      navigate('/');
+    } catch (error) {
+      console.error('Key generation error:', error);
+      errorMessage = 'Failed to generate new keys.';
+    } finally {
+      isLoading = false;
+    }
   }
 </script>
 
-<Layout title={selectedTab === 'login' ? 'Login' : 'Create Account'} isLoading={$isLoading}>
-  <div class="auth-page">
-    <div class="auth-container card">
-      <div class="auth-tabs">
-        <button 
-          class={`tab-btn ${selectedTab === 'login' ? 'active' : ''}`} 
-          on:click={() => setTab('login')}
-        >
-          Login
-        </button>
-        <button 
-          class={`tab-btn ${selectedTab === 'create' ? 'active' : ''}`} 
-          on:click={() => setTab('create')}
-        >
-          Create Account
-        </button>
+<div class="login-container">
+  <div class="login-card">
+    <div class="logo">
+      <h1>Nodus</h1>
+      <p>A private Nostr community</p>
+    </div>
+    
+    <div class="login-form">
+      <h2>Login to your account</h2>
+      
+      {#if errorMessage}
+        <div class="error-message">
+          {errorMessage}
+        </div>
+      {/if}
+      
+      <div class="input-group">
+        <label for="nsec">Private Key (nsec)</label>
+        <input 
+          type="password" 
+          id="nsec" 
+          bind:value={nsecInput} 
+          placeholder="Enter your nsec..." 
+          disabled={isLoading}
+        />
       </div>
       
-      {#if $error}
-        <div class="error-message">
-          <p>{$error}</p>
-        </div>
-      {/if}
+      <button 
+        class="login-button" 
+        on:click={handlePrivateKeyLogin} 
+        disabled={isLoading}
+      >
+        {isLoading ? 'Logging in...' : 'Login with Private Key'}
+      </button>
       
-      {#if selectedTab === 'login'}
-        <div class="auth-form">
-          <div class="form-group">
-            <label for="privateKey">Private Key (nsec or hex)</label>
-            <div class="input-group">
-              <input 
-                type={showPrivateKey ? 'text' : 'password'} 
-                id="privateKey" 
-                bind:value={privateKey} 
-                placeholder="nsec1..." 
-              />
-              <button 
-                type="button" 
-                class="toggle-visibility" 
-                on:click={() => showPrivateKey = !showPrivateKey}
-              >
-                {showPrivateKey ? '🙈' : '👁️'}
-              </button>
-            </div>
-            <p class="help-text">
-              Enter your Nostr private key (nsec or hex format).
-            </p>
-          </div>
-          
-          <div class="form-actions">
-            <button class="btn" on:click={handleLogin} disabled={!privateKey || $isLoading}>
-              Login
-            </button>
-          </div>
-        </div>
-      {:else}
-        <div class="auth-form">
-          {#if privateKey}
-            <div class="success-message">
-              <h3>Account Created Successfully!</h3>
-              <p>Your private key is shown below. Please save it in a secure location - it will only be shown once.</p>
-              
-              <div class="key-display">
-                <code>{privateKey}</code>
-                <button 
-                  class="copy-btn"
-                  on:click={() => {
-                    navigator.clipboard.writeText(privateKey);
-                    alert('Private key copied to clipboard!');
-                  }}
-                >
-                  Copy
-                </button>
-              </div>
-              
-              <div class="warning">
-                <p>⚠️ IMPORTANT: This key is your identity. Anyone with access to this key can control your account. Keep it safe and never share it!</p>
-              </div>
-              
-              <button class="btn" on:click={() => navigate('/')}>
-                Continue to App
-              </button>
-            </div>
-          {:else}
-            <p class="info-text">
-              Create a new Nostr identity with a unique key pair. Your private key will be generated securely in your browser.
-            </p>
-            
-            <div class="form-actions">
-              <button class="btn" on:click={handleCreateAccount} disabled={$isLoading}>
-                Generate New Keys
-              </button>
-            </div>
-          {/if}
-        </div>
-      {/if}
+      <div class="separator">
+        <span>OR</span>
+      </div>
+      
+      <button 
+        class="extension-button" 
+        on:click={handleExtensionLogin} 
+        disabled={isLoading}
+      >
+        {isLoading ? 'Connecting...' : 'Login with Extension'}
+      </button>
+      
+      <div class="separator">
+        <span>OR</span>
+      </div>
+      
+      <button 
+        class="generate-button" 
+        on:click={handleGenerateKeys} 
+        disabled={isLoading}
+      >
+        {isLoading ? 'Generating...' : 'Generate New Keys'}
+      </button>
+      
+      <p class="privacy-note">
+        Your private keys never leave your device. We value your privacy.
+      </p>
     </div>
   </div>
-</Layout>
+</div>
 
 <style>
-  .auth-page {
-    max-width: 500px;
-    margin: 0 auto;
-  }
-  
-  .auth-container {
-    padding: 2rem;
-  }
-  
-  .auth-tabs {
+  .login-container {
     display: flex;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid #eee;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    background-color: var(--bg-light);
   }
   
-  :global(body.dark) .auth-tabs {
-    border-bottom-color: #333;
+  :global(body.dark) .login-container {
+    background-color: var(--bg-dark);
   }
   
-  .tab-btn {
-    background: none;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    font-size: 1rem;
-    font-weight: 500;
+  .login-card {
+    width: 100%;
+    max-width: 500px;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+    background-color: white;
+  }
+  
+  :global(body.dark) .login-card {
+    background-color: var(--bg-dark);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  }
+  
+  .logo {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  
+  .logo h1 {
+    font-size: 42px;
+    font-weight: 700;
+    color: var(--primary-color);
+    margin-bottom: 8px;
+  }
+  
+  .logo p {
+    font-size: 16px;
     color: #666;
-    cursor: pointer;
-    position: relative;
   }
   
-  :global(body.dark) .tab-btn {
+  :global(body.dark) .logo p {
     color: #aaa;
   }
   
-  .tab-btn.active {
-    color: var(--nodus-blue);
-    font-weight: 600;
-  }
-  
-  .tab-btn.active::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background-color: var(--nodus-blue);
-  }
-  
-  .auth-form {
-    padding: 1rem 0;
-  }
-  
-  .form-group {
-    margin-bottom: 1.5rem;
-  }
-  
-  .form-group label {
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 600;
+  .login-form h2 {
+    font-size: 24px;
+    margin-bottom: 24px;
+    text-align: center;
   }
   
   .input-group {
-    display: flex;
-    position: relative;
+    margin-bottom: 20px;
+  }
+  
+  .input-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
   }
   
   .input-group input {
-    flex: 1;
-    padding: 0.75rem;
+    width: 100%;
+    padding: 12px;
     border: 1px solid #ddd;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 1rem;
-    padding-right: 3rem;
+    border-radius: 6px;
+    font-size: 16px;
+    transition: border-color 0.3s;
   }
   
   :global(body.dark) .input-group input {
-    background-color: #333;
-    color: #eee;
-    border-color: #555;
+    border-color: #444;
+    background-color: #222;
+    color: white;
   }
   
-  .toggle-visibility {
-    position: absolute;
-    right: 0.75rem;
-    top: 50%;
-    transform: translateY(-50%);
-    background: none;
+  .input-group input:focus {
+    border-color: var(--primary-color);
+    outline: none;
+  }
+  
+  button {
+    width: 100%;
+    padding: 12px;
     border: none;
-    font-size: 1.25rem;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 500;
     cursor: pointer;
+    transition: background 0.3s;
+  }
+  
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  
+  .login-button {
+    background-color: var(--primary-color);
+    color: white;
+  }
+  
+  .extension-button {
+    background-color: #333;
+    color: white;
+  }
+  
+  .generate-button {
+    background-color: #28a745;
+    color: white;
+  }
+  
+  .separator {
     display: flex;
     align-items: center;
-    justify-content: center;
+    text-align: center;
+    margin: 20px 0;
   }
   
-  .help-text {
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
+  .separator::before,
+  .separator::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #ddd;
+  }
+  
+  :global(body.dark) .separator::before,
+  :global(body.dark) .separator::after {
+    border-bottom: 1px solid #444;
+  }
+  
+  .separator span {
+    padding: 0 10px;
     color: #666;
   }
   
-  :global(body.dark) .help-text {
+  :global(body.dark) .separator span {
     color: #aaa;
   }
   
-  .info-text {
-    margin-bottom: 2rem;
-  }
-  
-  .form-actions {
-    margin-top: 2rem;
-  }
-  
   .error-message {
-    background-color: #ffebee;
+    background-color: #ffeeee;
     color: #d32f2f;
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
+    padding: 12px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    border-left: 4px solid #d32f2f;
   }
   
   :global(body.dark) .error-message {
     background-color: rgba(211, 47, 47, 0.2);
+    color: #ff6b6b;
   }
   
-  .error-message p {
-    margin: 0;
-  }
-  
-  .success-message {
+  .privacy-note {
+    margin-top: 20px;
     text-align: center;
+    font-size: 14px;
+    color: #666;
   }
   
-  .success-message h3 {
-    color: #2e7d32;
-    margin-top: 0;
-  }
-  
-  .key-display {
-    background-color: #f5f5f5;
-    padding: 1rem;
-    border-radius: 4px;
-    margin: 1.5rem 0;
-    position: relative;
-    word-break: break-all;
-    font-family: monospace;
-  }
-  
-  :global(body.dark) .key-display {
-    background-color: #333;
-  }
-  
-  .copy-btn {
-    position: absolute;
-    top: 0.5rem;
-    right: 0.5rem;
-    background-color: var(--nodus-blue);
-    color: white;
-    border: none;
-    border-radius: 4px;
-    padding: 0.25rem 0.5rem;
-    cursor: pointer;
-    font-size: 0.75rem;
-  }
-  
-  .warning {
-    background-color: #fff8e1;
-    color: #ff8f00;
-    padding: 1rem;
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
-    text-align: left;
-  }
-  
-  :global(body.dark) .warning {
-    background-color: rgba(255, 143, 0, 0.2);
-  }
-  
-  .warning p {
-    margin: 0;
+  :global(body.dark) .privacy-note {
+    color: #aaa;
   }
 </style>

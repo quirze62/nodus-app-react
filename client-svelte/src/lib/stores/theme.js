@@ -1,5 +1,7 @@
 import { writable } from 'svelte/store';
-import { browser } from '$app/environment';
+
+// Browser detection
+const browser = typeof window !== 'undefined';
 
 export const THEMES = {
   LIGHT: 'light',
@@ -63,5 +65,6 @@ function createThemeStore() {
   };
 }
 
-export const theme = createThemeStore();
-export { setTheme } from './theme';
+const themeStore = createThemeStore();
+export const theme = themeStore;
+export const setTheme = themeStore.setTheme;
