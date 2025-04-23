@@ -1,26 +1,21 @@
 import * as ndk from './ndk';
-import * as simpleRelay from './simpleRelayConnector';
-import * as simpleNostr from './simpleNostr';
 import { NostrEvent, NostrProfile, NostrUser } from './nostr';
 import logger from './logger';
 
 /**
- * Hybrid Nostr client that uses our custom WebSocket implementation
- * for relay connections but NDK for feed population and notes management.
+ * Nostr client implementation using NDK.
+ * This is a simplified wrapper around NDK to provide a clean interface for our application.
  */
 
 // Initialize state
 let initialized = false;
 let currentUser: NostrUser | null = null;
 
-// Initialize the hybrid client
+// Initialize the Nostr client
 export const initialize = async (): Promise<void> => {
   if (initialized) return;
   
-  logger.info('Initializing Hybrid Nostr client');
-  
-  // Initialize our custom WebSocket implementation
-  await simpleNostr.initialize();
+  logger.info('Initializing Nostr client with NDK');
   
   // Initialize NDK with default relays
   await ndk.getNDK();
@@ -43,17 +38,15 @@ export const initialize = async (): Promise<void> => {
 
 // Clean up
 export const cleanup = async (): Promise<void> => {
-  logger.info('Cleaning up Hybrid Nostr client');
+  logger.info('Cleaning up Nostr client');
   
-  // Clean up our custom WebSocket implementation
-  await simpleNostr.cleanup();
-  
+  // Nothing specific to clean up with NDK
   initialized = false;
 };
 
 // Login with a private key
 export const loginWithPrivateKey = async (privateKey: string): Promise<NostrUser> => {
-  logger.info('Logging in with private key (hybrid mode)');
+  logger.info('Logging in with private key');
   
   try {
     // Use NDK to generate key pair and user profile
@@ -69,13 +62,6 @@ export const loginWithPrivateKey = async (privateKey: string): Promise<NostrUser
       logger.warn('Failed to store user in localStorage:', e);
     }
     
-    // Make sure our custom relays are also connected
-    try {
-      await simpleNostr.loginWithPrivateKey(privateKey);
-    } catch (e) {
-      logger.warn('Failed to connect custom relays with private key:', e);
-    }
-    
     return ndkUser;
   } catch (error) {
     logger.error('Error logging in with private key:', error);
@@ -85,7 +71,7 @@ export const loginWithPrivateKey = async (privateKey: string): Promise<NostrUser
 
 // Generate a new user
 export const generateNewUser = async (): Promise<NostrUser> => {
-  logger.info('Generating new user (hybrid mode)');
+  logger.info('Generating new user');
   
   try {
     // Use NDK to generate key pair and user profile
@@ -101,17 +87,6 @@ export const generateNewUser = async (): Promise<NostrUser> => {
       logger.warn('Failed to store user in localStorage:', e);
     }
     
-    // Make sure our custom relays are also connected
-    try {
-      if (ndkUser.privateKey) {
-        await simpleNostr.loginWithPrivateKey(ndkUser.privateKey);
-      } else {
-        logger.warn('No private key available for custom relay connection');
-      }
-    } catch (e) {
-      logger.warn('Failed to connect custom relays with new user:', e);
-    }
-    
     return ndkUser;
   } catch (error) {
     logger.error('Error generating new user:', error);
@@ -121,21 +96,11 @@ export const generateNewUser = async (): Promise<NostrUser> => {
 
 // Fetch a user's profile
 export const fetchUserProfile = async (pubkey: string): Promise<NostrProfile | undefined> => {
-  logger.info(`Fetching profile for ${pubkey} (hybrid mode)`);
+  logger.info(`Fetching profile for ${pubkey}`);
   
   try {
-    // Try to fetch using NDK first
-    try {
-      const profile = await ndk.fetchUserProfile(pubkey);
-      if (profile) {
-        return profile;
-      }
-    } catch (error) {
-      logger.warn('NDK failed to fetch profile, falling back to simple implementation:', error);
-    }
-    
-    // Fall back to our custom implementation
-    return simpleNostr.fetchUserProfile(pubkey);
+    const profile = await ndk.fetchUserProfile(pubkey);
+    return profile;
   } catch (error) {
     logger.error('Error fetching user profile:', error);
     return undefined;
@@ -144,7 +109,7 @@ export const fetchUserProfile = async (pubkey: string): Promise<NostrProfile | u
 
 // Update a user's profile
 export const updateUserProfile = async (profile: NostrProfile): Promise<boolean> => {
-  logger.info('Updating user profile (hybrid mode)');
+  logger.info('Updating user profile');
   
   if (!currentUser) {
     logger.error('No current user');
@@ -152,18 +117,8 @@ export const updateUserProfile = async (profile: NostrProfile): Promise<boolean>
   }
   
   try {
-    // Try to update using NDK first
-    try {
-      const success = await ndk.updateUserProfile(currentUser.publicKey, profile);
-      if (success) {
-        return true;
-      }
-    } catch (error) {
-      logger.warn('NDK failed to update profile, falling back to simple implementation:', error);
-    }
-    
-    // Fall back to our custom implementation
-    return simpleNostr.updateUserProfile(profile);
+    const success = await ndk.updateUserProfile(currentUser.publicKey, profile);
+    return success;
   } catch (error) {
     logger.error('Error updating user profile:', error);
     return false;
@@ -172,21 +127,11 @@ export const updateUserProfile = async (profile: NostrProfile): Promise<boolean>
 
 // Publish a note
 export const publishNote = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
-  logger.info('Publishing note (hybrid mode)');
+  logger.info('Publishing note');
   
   try {
-    // Try to publish using NDK first
-    try {
-      const event = await ndk.publishNote(content, tags);
-      if (event) {
-        return event;
-      }
-    } catch (error) {
-      logger.warn('NDK failed to publish note, falling back to simple implementation:', error);
-    }
-    
-    // Fall back to our custom implementation
-    return simpleNostr.publishNote(content, tags);
+    const event = await ndk.publishNote(content, tags);
+    return event;
   } catch (error) {
     logger.error('Error publishing note:', error);
     return null;
@@ -195,21 +140,11 @@ export const publishNote = async (content: string, tags: string[][] = []): Promi
 
 // Fetch recent notes
 export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
-  logger.info(`Fetching ${limit} recent notes (hybrid mode)`);
+  logger.info(`Fetching ${limit} recent notes`);
   
   try {
-    // Try to fetch using NDK first
-    try {
-      const notes = await ndk.fetchNotes(limit);
-      if (notes.length > 0) {
-        return notes;
-      }
-    } catch (error) {
-      logger.warn('NDK failed to fetch notes, falling back to simple implementation:', error);
-    }
-    
-    // Fall back to our custom implementation
-    return simpleNostr.fetchNotes(limit);
+    const notes = await ndk.fetchNotes(limit);
+    return notes;
   } catch (error) {
     logger.error('Error fetching notes:', error);
     return [];
@@ -218,7 +153,7 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
 
 // Send a direct message
 export const sendMessage = async (receiverPubkey: string, content: string): Promise<NostrEvent | null> => {
-  logger.info(`Sending message to ${receiverPubkey} (hybrid mode)`);
+  logger.info(`Sending message to ${receiverPubkey}`);
   
   if (!currentUser) {
     logger.error('No current user');
@@ -226,7 +161,6 @@ export const sendMessage = async (receiverPubkey: string, content: string): Prom
   }
   
   try {
-    // Try to send using NDK
     return await ndk.sendMessage(receiverPubkey, content);
   } catch (error) {
     logger.error('Error sending message:', error);
@@ -236,7 +170,7 @@ export const sendMessage = async (receiverPubkey: string, content: string): Prom
 
 // Fetch messages between the current user and another user
 export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> => {
-  logger.info(`Fetching messages with ${otherPubkey} (hybrid mode)`);
+  logger.info(`Fetching messages with ${otherPubkey}`);
   
   if (!currentUser) {
     logger.error('No current user');
@@ -244,7 +178,6 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
   }
   
   try {
-    // Try to fetch using NDK
     return await ndk.fetchMessages(otherPubkey);
   } catch (error) {
     logger.error('Error fetching messages:', error);
@@ -255,8 +188,8 @@ export const fetchMessages = async (otherPubkey: string): Promise<NostrEvent[]> 
 // Get relay status
 export const getRelayStatus = async (): Promise<{url: string, connected: boolean}[]> => {
   try {
-    // Get relay status from our custom implementation
-    return simpleNostr.getRelayStatus();
+    // Get relay status directly from NDK
+    return await ndk.getRelayStatus();
   } catch (error) {
     logger.error('Error getting relay status:', error);
     return [];
@@ -266,8 +199,8 @@ export const getRelayStatus = async (): Promise<{url: string, connected: boolean
 // Add a relay
 export const addRelay = async (url: string): Promise<boolean> => {
   try {
-    // Add relay using our custom implementation
-    return simpleNostr.addRelay(url);
+    // Add relay using NDK
+    return await ndk.addRelayToNDK(url);
   } catch (error) {
     logger.error(`Error adding relay ${url}:`, error);
     return false;
@@ -277,8 +210,8 @@ export const addRelay = async (url: string): Promise<boolean> => {
 // Remove a relay
 export const removeRelay = async (url: string): Promise<boolean> => {
   try {
-    // Remove relay using our custom implementation
-    return simpleNostr.removeRelay(url);
+    // Remove relay using NDK
+    return await ndk.removeRelayFromNDK(url);
   } catch (error) {
     logger.error(`Error removing relay ${url}:`, error);
     return false;
@@ -287,7 +220,7 @@ export const removeRelay = async (url: string): Promise<boolean> => {
 
 // Create a reaction to a note (like)
 export const createReaction = async (eventId: string, content: string = "+"): Promise<NostrEvent | null> => {
-  logger.info(`Creating reaction to event ${eventId} (hybrid mode)`);
+  logger.info(`Creating reaction to event ${eventId}`);
   
   if (!currentUser) {
     logger.error('No current user when trying to create reaction');
@@ -295,7 +228,7 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
   }
   
   try {
-    // First, try to fetch the original event to get its author's pubkey
+    // First, fetch the original event to get its author's pubkey
     const filter = {
       ids: [eventId]
     };
@@ -324,7 +257,7 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
       logger.info(`Adding p tag for author ${originalEvent.pubkey} to reaction`);
     }
     
-    // Try to publish using NDK with explicit check for relay connections
+    // Check for relay connections
     const ndk_instance = await ndk.getNDK();
     const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
     
@@ -344,7 +277,7 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
 
 // Repost a note
 export const repostNote = async (eventId: string, eventPubkey: string): Promise<NostrEvent | null> => {
-  logger.info(`Reposting event ${eventId} (hybrid mode)`);
+  logger.info(`Reposting event ${eventId}`);
   
   if (!currentUser) {
     logger.error('No current user when trying to repost');
@@ -352,7 +285,7 @@ export const repostNote = async (eventId: string, eventPubkey: string): Promise<
   }
   
   try {
-    // First, try to fetch the original event for proper tagging
+    // First, fetch the original event for proper tagging
     const filter = {
       ids: [eventId]
     };
@@ -384,7 +317,7 @@ export const repostNote = async (eventId: string, eventPubkey: string): Promise<
       content = `nostr:${originalEvent.id}`;
     }
     
-    // Try to publish using NDK with explicit check for relay connections
+    // Check for relay connections
     const ndk_instance = await ndk.getNDK();
     const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
     
@@ -410,7 +343,7 @@ export const replyToNote = async (
   content: string,
   additionalTags: string[][] = []
 ): Promise<NostrEvent | null> => {
-  logger.info(`Replying to event ${eventId} (hybrid mode)`);
+  logger.info(`Replying to event ${eventId}`);
   
   if (!currentUser) {
     logger.error('No current user');
@@ -432,7 +365,7 @@ export const replyToNote = async (
     // Add any additional tags
     tags.push(...additionalTags);
     
-    // Try to publish using NDK
+    // Publish using NDK
     return await ndk.publishNote(content, tags);
   } catch (error) {
     logger.error('Error replying to note:', error);
@@ -442,10 +375,10 @@ export const replyToNote = async (
 
 // Get reactions to a note
 export const getReactions = async (eventId: string): Promise<NostrEvent[]> => {
-  logger.info(`Getting reactions to event ${eventId} (hybrid mode)`);
+  logger.info(`Getting reactions to event ${eventId}`);
   
   try {
-    // Try to fetch using NDK with a specific filter for reactions
+    // Fetch using NDK with a specific filter for reactions
     const filter = {
       kinds: [7], // Kind 7 = reaction
       "#e": [eventId], // Events that reference the target event
@@ -460,10 +393,10 @@ export const getReactions = async (eventId: string): Promise<NostrEvent[]> => {
 
 // Get reposts of a note
 export const getReposts = async (eventId: string): Promise<NostrEvent[]> => {
-  logger.info(`Getting reposts of event ${eventId} (hybrid mode)`);
+  logger.info(`Getting reposts of event ${eventId}`);
   
   try {
-    // Try to fetch using NDK with a specific filter for reposts
+    // Fetch using NDK with a specific filter for reposts
     const filter = {
       kinds: [6], // Kind 6 = repost
       "#e": [eventId], // Events that reference the target event
@@ -478,10 +411,10 @@ export const getReposts = async (eventId: string): Promise<NostrEvent[]> => {
 
 // Get replies to a note (thread)
 export const getReplies = async (eventId: string): Promise<NostrEvent[]> => {
-  logger.info(`Getting replies to event ${eventId} (hybrid mode)`);
+  logger.info(`Getting replies to event ${eventId}`);
   
   try {
-    // Try to fetch using NDK with a specific filter for replies
+    // Fetch using NDK with a specific filter for replies
     const filter = {
       kinds: [1], // Kind 1 = text note
       "#e": [eventId], // Events that reference the target event

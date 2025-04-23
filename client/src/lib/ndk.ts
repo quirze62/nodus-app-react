@@ -8,50 +8,59 @@ import logger from './logger';
 let ndkInstance: NDK | null = null;
 
 /**
+ * Configure NDK with proper WebSocket implementation for Replit environment
+ */
+const configureNDK = () => {
+  // Import WebSocket from ws package (this works in node.js environment)
+  const WebSocket = require('ws');
+  
+  // Tell NDK to use the ws package for WebSocket connections
+  // This is critical for Replit environment
+  // @ts-ignore - NDK will use this global WebSocket
+  global.WebSocket = WebSocket;
+  
+  logger.info("Configured WebSocket implementation for NDK");
+};
+
+/**
  * Get the NDK instance, creating and connecting to it if necessary
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
-    // Check WebSocket availability
-    logger.debug("WebSocket implementation available:", typeof WebSocket !== 'undefined');
+    // Configure WebSocket for NDK
+    configureNDK();
     
-    // Initialize NDK with our Nodus relay and fallback to public relays
+    // Use a more focused set of relays to improve reliability
+    // Start with just a couple of proven reliable relays
     const relayUrls = [
-      'wss://relay.mynodus.com',
-      'wss://relay.damus.io',
-      'wss://relay.nostr.band', 
-      'wss://nos.lol',
-      'wss://nostr.wine',
-      'wss://relay.current.fyi'
+      'wss://relay.mynodus.com',  // Our primary relay
+      'wss://relay.damus.io'      // Proven to work in our tests
     ];
     
-    // Create the NDK instance with explicit relay URLs
+    logger.info(`Initializing NDK with relays: ${relayUrls.join(', ')}`);
+    
+    // Create the NDK instance with minimal configuration
     ndkInstance = new NDK({
       explicitRelayUrls: relayUrls,
-      enableOutboxModel: true, // for offline functionality
-      autoConnectUserRelays: false,
+      enableOutboxModel: true
     });
     
     try {
-      // Connect to relays with timeout
-      await Promise.race([
-        ndkInstance.connect(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('NDK connection timeout')), 10000))
-      ]);
+      logger.info("Connecting to NDK relays...");
+      await ndkInstance.connect();
       
-      // Log relay connections
+      // Log successful connections
       const connectedRelays = Array.from(ndkInstance.pool.relays.values())
         .filter((relay: any) => relay.connected)
         .map((relay: any) => relay.url);
       
       logger.info(`Connected to ${connectedRelays.length} NDK relays: ${connectedRelays.join(', ')}`);
       
-      // Initialize relay manager with NDK instance
+      // Initialize relay manager
       const relayManager = getRelayManager();
       await relayManager.initialize(ndkInstance);
     } catch (error) {
       logger.error("Error connecting to NDK relays:", error);
-      // Continue anyway - we'll retry connections in the publishEvent function
     }
   }
   
