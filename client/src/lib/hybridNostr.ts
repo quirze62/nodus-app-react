@@ -22,10 +22,23 @@ export const initialize = async (): Promise<void> => {
   // Initialize our custom WebSocket implementation
   await simpleNostr.initialize();
   
-  // Initialize NDK (but don't connect to relays through NDK)
+  // Initialize NDK with default relays
   await ndk.getNDK();
   
   initialized = true;
+  
+  // Try to reconnect if there's a stored user
+  try {
+    const storedUser = localStorage.getItem('currentNostrUser');
+    if (storedUser) {
+      const user = JSON.parse(storedUser);
+      if (user && user.privateKey) {
+        await loginWithPrivateKey(user.privateKey);
+      }
+    }
+  } catch (error) {
+    logger.error('Error auto-logging in:', error);
+  }
 };
 
 // Clean up
@@ -46,8 +59,22 @@ export const loginWithPrivateKey = async (privateKey: string): Promise<NostrUser
     // Use NDK to generate key pair and user profile
     const ndkUser = await ndk.loginWithPrivateKey(privateKey);
     
-    // Store the current user
+    // Store the current user in memory
     currentUser = ndkUser;
+    
+    // Also store in localStorage for persistence across sessions
+    try {
+      localStorage.setItem('currentNostrUser', JSON.stringify(ndkUser));
+    } catch (e) {
+      logger.warn('Failed to store user in localStorage:', e);
+    }
+    
+    // Make sure our custom relays are also connected
+    try {
+      await simpleNostr.loginWithPrivateKey(privateKey);
+    } catch (e) {
+      logger.warn('Failed to connect custom relays with private key:', e);
+    }
     
     return ndkUser;
   } catch (error) {
@@ -64,8 +91,22 @@ export const generateNewUser = async (): Promise<NostrUser> => {
     // Use NDK to generate key pair and user profile
     const ndkUser = await ndk.generateNewUser();
     
-    // Store the current user
+    // Store the current user in memory
     currentUser = ndkUser;
+    
+    // Also store in localStorage for persistence across sessions
+    try {
+      localStorage.setItem('currentNostrUser', JSON.stringify(ndkUser));
+    } catch (e) {
+      logger.warn('Failed to store user in localStorage:', e);
+    }
+    
+    // Make sure our custom relays are also connected
+    try {
+      await simpleNostr.loginWithPrivateKey(ndkUser.privateKey);
+    } catch (e) {
+      logger.warn('Failed to connect custom relays with new user:', e);
+    }
     
     return ndkUser;
   } catch (error) {
