@@ -12,18 +12,47 @@ let ndkInstance: NDK | null = null;
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
+    // Check WebSocket availability
+    logger.debug("WebSocket implementation available:", typeof WebSocket !== 'undefined');
+    
     // Initialize NDK with our Nodus relay and fallback to public relays
+    const relayUrls = [
+      'wss://relay.mynodus.com',
+      'wss://relay.damus.io',
+      'wss://relay.nostr.band', 
+      'wss://nos.lol',
+      'wss://nostr.wine',
+      'wss://relay.current.fyi'
+    ];
+    
+    // Create the NDK instance with explicit relay URLs
     ndkInstance = new NDK({
-      explicitRelayUrls: ['wss://relay.mynodus.com', 'wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol', 'wss://nostr.wine'],
+      explicitRelayUrls: relayUrls,
       enableOutboxModel: true, // for offline functionality
+      autoConnectUserRelays: false,
     });
     
-    // Connect to relays
-    await ndkInstance.connect();
-    
-    // Initialize relay manager with NDK instance
-    const relayManager = getRelayManager();
-    await relayManager.initialize(ndkInstance);
+    try {
+      // Connect to relays with timeout
+      await Promise.race([
+        ndkInstance.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('NDK connection timeout')), 10000))
+      ]);
+      
+      // Log relay connections
+      const connectedRelays = Array.from(ndkInstance.pool.relays.values())
+        .filter((relay: any) => relay.connected)
+        .map((relay: any) => relay.url);
+      
+      logger.info(`Connected to ${connectedRelays.length} NDK relays: ${connectedRelays.join(', ')}`);
+      
+      // Initialize relay manager with NDK instance
+      const relayManager = getRelayManager();
+      await relayManager.initialize(ndkInstance);
+    } catch (error) {
+      logger.error("Error connecting to NDK relays:", error);
+      // Continue anyway - we'll retry connections in the publishEvent function
+    }
   }
   
   return ndkInstance;
@@ -188,52 +217,97 @@ export const publishEvent = async (kind: number, content: string, tags: string[]
     event.content = content;
     event.tags = tags;
     
-    // Check if we have connected relays
-    const relayStatus = Array.from(ndk.pool.relays.values())
-      .filter(relay => relay.connected);
+    // Test relay connectivity before attempting publish
+    logger.info("Testing relay connectivity before publishing...");
+    const relayUrls = Array.from(ndk.pool.relays.keys());
+    logger.debug("Relay URLs:", relayUrls);
     
-    if (relayStatus.length === 0) {
-      logger.error('No connected relays to publish to - attempting to reconnect');
-      // Try to reconnect
-      try {
-        await ndk.connect();
-        // Check again after connection attempt
-        const connectedRelays = Array.from(ndk.pool.relays.values()).filter(r => r.connected);
-        if (connectedRelays.length === 0) {
-          throw new Error('Failed to connect to any relays');
-        }
-        logger.info(`Reconnected to ${connectedRelays.length} relays`);
-      } catch (connError) {
-        logger.error('Failed to reconnect to relays:', connError);
-        throw new Error('No connected relays for publishing');
-      }
-    }
+    // Check if we have any connected relays
+    const connectedRelays = Array.from(ndk.pool.relays.values())
+      .filter((relay: any) => relay.connected)
+      .map((relay: any) => relay.url);
     
-    logger.info(`Publishing event kind ${kind} to ${relayStatus.length} relays`);
-    
-    try {
-      // Sign and publish with timeout to prevent hanging
-      await new Promise<void>(async (resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          reject(new Error("Publish timed out after 10 seconds"));
-        }, 10000);
-        
-        try {
-          await event.sign();
-          await event.publish();
-          clearTimeout(timeoutId);
-          resolve();
-        } catch (e) {
-          clearTimeout(timeoutId);
-          reject(e);
-        }
-      });
+    if (connectedRelays.length === 0) {
+      logger.warn('No connected relays detected, attempting to reconnect');
       
-      logger.info(`Successfully published event kind ${kind}`);
-    } catch (e) {
-      logger.error(`Failed to publish event: ${e}`);
-      throw e;
+      // First try to reconnect with our standard connection
+      try {
+        logger.info("Attempting normal reconnection...");
+        await Promise.race([
+          ndk.connect(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Reconnection timeout')), 5000))
+        ]);
+        
+        // Check if we connected successfully
+        const newlyConnectedRelays = Array.from(ndk.pool.relays.values())
+          .filter((relay: any) => relay.connected)
+          .map((relay: any) => relay.url);
+          
+        if (newlyConnectedRelays.length > 0) {
+          logger.info(`Reconnected to ${newlyConnectedRelays.length} relays: ${newlyConnectedRelays.join(', ')}`);
+        } else {
+          logger.warn("Normal reconnection failed, forcing individual relay connections");
+          
+          // Try forcing connections to individual relays
+          const connectionPromises = relayUrls.map(async (url) => {
+            try {
+              const relay = ndk.pool.relays.get(url);
+              if (relay) {
+                logger.info(`Attempting to connect to relay ${url}...`);
+                await Promise.race([
+                  relay.connect(),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error(`Connection timeout for ${url}`)), 3000))
+                ]);
+                return url;
+              }
+            } catch (error) {
+              logger.error(`Failed to connect to ${url}:`, error);
+            }
+            return null;
+          });
+          
+          // Wait for all connection attempts
+          const results = await Promise.allSettled(connectionPromises);
+          const successfulConnections = results
+            .filter((result): result is PromiseFulfilledResult<string> => 
+              result.status === 'fulfilled' && result.value !== null)
+            .map(result => result.value);
+            
+          if (successfulConnections.length > 0) {
+            logger.info(`Successfully connected to ${successfulConnections.length} relays: ${successfulConnections.join(', ')}`);
+          } else {
+            logger.error("Failed to connect to any relays after multiple attempts");
+            throw new Error("No connected relays available for publishing");
+          }
+        }
+      } catch (reconnectionError) {
+        logger.error("Reconnection attempts failed:", reconnectionError);
+        throw new Error("Failed to connect to any relays for publishing");
+      }
+    } else {
+      logger.info(`Already connected to ${connectedRelays.length} relays: ${connectedRelays.join(', ')}`);
     }
+    
+    // Sign and publish with timeout to prevent hanging
+    logger.info(`Signing and publishing event kind ${kind}`);
+    await new Promise<void>(async (resolve, reject) => {
+      // Set a longer timeout for publishing to ensure it has enough time
+      const timeoutId = setTimeout(() => {
+        reject(new Error("Publishing timed out after 15 seconds"));
+      }, 15000);
+      
+      try {
+        await event.sign();
+        await event.publish();
+        clearTimeout(timeoutId);
+        resolve();
+      } catch (pubError) {
+        clearTimeout(timeoutId);
+        reject(pubError);
+      }
+    });
+    
+    logger.info(`Successfully published event kind ${kind}`);
     
     // Convert to our format
     const nostrEvent: NostrEvent = {
