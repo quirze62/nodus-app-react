@@ -11,15 +11,9 @@ let ndkInstance: NDK | null = null;
  * Configure NDK with proper WebSocket implementation for Replit environment
  */
 const configureNDK = () => {
-  // Import WebSocket from ws package (this works in node.js environment)
-  const WebSocket = require('ws');
-  
-  // Tell NDK to use the ws package for WebSocket connections
-  // This is critical for Replit environment
-  // @ts-ignore - NDK will use this global WebSocket
-  global.WebSocket = WebSocket;
-  
-  logger.info("Configured WebSocket implementation for NDK");
+  // In browser environment, we already have WebSocket
+  // No need to import it or configure it
+  logger.info("WebSocket already available in browser environment");
 };
 
 /**
@@ -30,11 +24,13 @@ export const getNDK = async (): Promise<NDK> => {
     // Configure WebSocket for NDK
     configureNDK();
     
-    // Use a more focused set of relays to improve reliability
-    // Start with just a couple of proven reliable relays
+    // Use a diverse set of reliable relays
     const relayUrls = [
       'wss://relay.mynodus.com',  // Our primary relay
-      'wss://relay.damus.io'      // Proven to work in our tests
+      'wss://relay.damus.io',     // Popular and reliable relay
+      'wss://nos.lol',            // Another reliable relay
+      'wss://nostr.wine',         // Another reliable relay
+      'wss://relay.nostr.band'    // Another reliable relay
     ];
     
     logger.info(`Initializing NDK with relays: ${relayUrls.join(', ')}`);
@@ -364,6 +360,62 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
       const notes: NostrEvent[] = [];
       const subscription = ndk.subscribe(filter, { closeOnEose: true });
       
+      // Set a timeout in case we don't receive any events
+      const timeoutId = setTimeout(() => {
+        logger.info("No notes received via subscription, trying normal fetch");
+        // If no notes received, try a direct fetch from each relay
+        const directFetch = async () => {
+          try {
+            const connectedRelays = Array.from(ndk.pool.relays.values())
+              .filter((relay: any) => relay.connected);
+              
+            if (connectedRelays.length === 0) {
+              logger.warn("No connected relays for direct fetch");
+              return [];
+            }
+            
+            // Try to connect to any relays that aren't connected yet
+            await ndk.connect();
+            
+            // Manually fetch from each relay
+            const events = await ndk.fetchEvents(filter);
+            const fetchedNotes: NostrEvent[] = [];
+            
+            events.forEach((ndkEvent: NDKEvent) => {
+              const note: NostrEvent = {
+                id: ndkEvent.id,
+                pubkey: ndkEvent.pubkey,
+                created_at: ndkEvent.created_at,
+                kind: ndkEvent.kind,
+                tags: ndkEvent.tags,
+                content: ndkEvent.content,
+                sig: ndkEvent.sig || ""
+              };
+              fetchedNotes.push(note);
+            });
+            
+            // Sort by created_at, newest first
+            fetchedNotes.sort((a, b) => b.created_at - a.created_at);
+            return fetchedNotes;
+          } catch (error) {
+            logger.error("Error in direct fetch:", error);
+            return [];
+          }
+        };
+        
+        // If timeout triggers and we don't have notes, do a direct fetch
+        if (notes.length === 0) {
+          directFetch().then(fetchedNotes => {
+            logger.info(`Direct fetch returned ${fetchedNotes.length} notes`);
+            resolve(fetchedNotes);
+          });
+        } else {
+          // If we already have notes, use them
+          logger.info(`Timeout triggered but we have ${notes.length} notes`);
+          resolve(notes);
+        }
+      }, 6000);
+      
       subscription.on('event', async (event: NDKEvent) => {
         logger.info(`Received note: ${event.content.substring(0, 30)}...`);
         
@@ -388,6 +440,9 @@ export const fetchNotes = async (limit: number = 50): Promise<NostrEvent[]> => {
       });
       
       subscription.on('eose', () => {
+        // Clear timeout as we received EOSE
+        clearTimeout(timeoutId);
+        
         logger.info(`EOSE received with ${notes.length} notes`);
         // Sort by created_at, newest first
         notes.sort((a, b) => b.created_at - a.created_at);
