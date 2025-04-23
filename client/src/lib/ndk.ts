@@ -12,9 +12,9 @@ let ndkInstance: NDK | null = null;
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
-    // Initialize NDK with only mynodus relay for verified community
+    // Initialize NDK with default relays since the app needs to work
     ndkInstance = new NDK({
-      explicitRelayUrls: ['wss://relay.mynodus.org'],
+      explicitRelayUrls: ['wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol', 'wss://nostr.wine'],
       enableOutboxModel: true, // for offline functionality
     });
     
@@ -187,8 +187,19 @@ export const publishEvent = async (kind: number, content: string, tags: string[]
     event.content = content;
     event.tags = tags;
     
-    // Sign and publish
-    await event.publish();
+    try {
+      // Sign and publish with timeout
+      const publishPromise = event.publish();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Publish timed out")), 10000); // 10 second timeout
+      });
+      
+      await Promise.race([publishPromise, timeoutPromise]);
+      logger.info(`Successfully published event kind ${kind}`);
+    } catch (e) {
+      logger.error(`Failed to publish event: ${e}`);
+      throw e;
+    }
     
     // Convert to our format
     const nostrEvent: NostrEvent = {
