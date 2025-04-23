@@ -68,6 +68,46 @@ function Router() {
 }
 
 function App() {
+  const [isMigratedToSvelte, setIsMigratedToSvelte] = useState(false);
+  
+  // Check if the user wants to view the Svelte version
+  useEffect(() => {
+    const preferSvelte = localStorage.getItem('preferSvelte') === 'true';
+    setIsMigratedToSvelte(preferSvelte);
+  }, []);
+  
+  // If user has opted for Svelte, show a message with a link to the Svelte app
+  if (isMigratedToSvelte) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen p-6 bg-white dark:bg-gray-900">
+        <div className="max-w-md mx-auto bg-white dark:bg-gray-800 rounded-lg shadow-md p-8 text-center">
+          <h1 className="text-3xl font-bold text-blue-600 mb-4">Nodus App</h1>
+          <p className="text-gray-700 dark:text-gray-300 mb-6">
+            We've migrated to a new Svelte implementation! You're currently viewing the legacy React version.
+          </p>
+          <div className="space-y-4">
+            <a 
+              href="http://localhost:5173" 
+              target="_blank" 
+              className="block w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors"
+            >
+              Open Svelte Version
+            </a>
+            <button 
+              onClick={() => {
+                localStorage.removeItem('preferSvelte');
+                setIsMigratedToSvelte(false);
+              }}
+              className="block w-full bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 font-bold py-3 px-4 rounded-lg transition-colors"
+            >
+              Continue with React Version
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
@@ -76,6 +116,17 @@ function App() {
             <Toaster />
             <Router />
             <SimpleDebugPanel />
+            <div className="fixed bottom-4 right-4 z-50">
+              <button
+                onClick={() => {
+                  localStorage.setItem('preferSvelte', 'true');
+                  setIsMigratedToSvelte(true);
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg transition-colors"
+              >
+                Try Svelte Version
+              </button>
+            </div>
           </TooltipProvider>
         </AuthProvider>
       </ThemeProvider>
