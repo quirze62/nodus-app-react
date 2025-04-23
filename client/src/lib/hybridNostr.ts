@@ -324,18 +324,16 @@ export const createReaction = async (eventId: string, content: string = "+"): Pr
       logger.info(`Adding p tag for author ${originalEvent.pubkey} to reaction`);
     }
     
-    // Try to publish using NDK with explicit check for relay connections
-    const ndk_instance = await ndk.getNDK();
-    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
-    
-    if (connectedRelays.length === 0) {
-      logger.warn('No connected relays for reaction, attempting to reconnect');
-      await ndk_instance.connect();
+    // Create and publish the reaction using the simpleNostr implementation
+    // This uses direct WebSocket connections instead of NDK
+    const event = await simpleNostr.publishNote(content, tags);
+    if (event) {
+      logger.info(`Published reaction using simpleNostr`);
+      return event;
+    } else {
+      logger.error('Failed to publish reaction using simpleNostr');
+      return null;
     }
-    
-    // Publish the reaction
-    logger.info(`Publishing reaction to ${connectedRelays.length} relays`);
-    return await ndk.publishEvent(7, content, tags); // Kind 7 = reaction
   } catch (error) {
     logger.error('Error creating reaction:', error);
     return null;
@@ -384,18 +382,16 @@ export const repostNote = async (eventId: string, eventPubkey: string): Promise<
       content = `nostr:${originalEvent.id}`;
     }
     
-    // Try to publish using NDK with explicit check for relay connections
-    const ndk_instance = await ndk.getNDK();
-    const connectedRelays = Array.from(ndk_instance.pool.relays.values()).filter((relay: any) => relay.connected);
-    
-    if (connectedRelays.length === 0) {
-      logger.warn('No connected relays for repost, attempting to reconnect');
-      await ndk_instance.connect();
+    // Use simpleNostr to publish the repost using direct WebSocket connections
+    // This avoids the NDK connection issues
+    const event = await simpleNostr.publishNote(content, tags);
+    if (event) {
+      logger.info(`Published repost using simpleNostr`);
+      return event;
+    } else {
+      logger.error('Failed to publish repost using simpleNostr');
+      return null;
     }
-    
-    // Publish the repost
-    logger.info(`Publishing repost to ${connectedRelays.length} relays`);
-    return await ndk.publishEvent(6, content, tags); // Kind 6 = repost
   } catch (error) {
     logger.error('Error reposting note:', error);
     return null;
