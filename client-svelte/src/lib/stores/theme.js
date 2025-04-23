@@ -1,78 +1,67 @@
 import { writable } from 'svelte/store';
+import { browser } from '$app/environment';
 
-// Theme options
 export const THEMES = {
   LIGHT: 'light',
   DARK: 'dark',
   SYSTEM: 'system'
 };
 
-// Function to get user's system theme preference
-const getSystemTheme = () => {
-  if (typeof window === 'undefined') return THEMES.LIGHT;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches 
-    ? THEMES.DARK 
-    : THEMES.LIGHT;
-};
+function createThemeStore() {
+  // Get saved theme from localStorage or use system default
+  const getInitialTheme = () => {
+    if (browser) {
+      const saved = localStorage.getItem('nodus-theme');
+      if (saved && (saved === THEMES.LIGHT || saved === THEMES.DARK || saved === THEMES.SYSTEM)) {
+        return saved;
+      }
+    }
+    return THEMES.SYSTEM;
+  };
 
-// Function to get initial theme
-const getInitialTheme = () => {
-  if (typeof window === 'undefined') return THEMES.LIGHT;
-  
-  const storedTheme = localStorage.getItem('nodus_theme');
-  if (storedTheme && Object.values(THEMES).includes(storedTheme)) {
-    return storedTheme;
-  }
-  
-  return THEMES.SYSTEM;
-};
+  const { subscribe, set, update } = writable(getInitialTheme());
 
-// Create theme store
-export const theme = writable(getInitialTheme());
+  // Apply theme to the document
+  const applyTheme = (theme) => {
+    if (!browser) return;
 
-// Function to apply theme to document
-const applyTheme = (newTheme) => {
-  if (typeof window === 'undefined') return;
-  
-  const effectiveTheme = newTheme === THEMES.SYSTEM 
-    ? getSystemTheme() 
-    : newTheme;
-  
-  if (effectiveTheme === THEMES.DARK) {
-    document.body.classList.add('dark');
-  } else {
-    document.body.classList.remove('dark');
-  }
-};
+    // For system theme, check user's preference
+    if (theme === THEMES.SYSTEM) {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.body.classList.toggle('dark', prefersDark);
+    } else {
+      document.body.classList.toggle('dark', theme === THEMES.DARK);
+    }
+  };
 
-// Watch for theme changes and apply them
-theme.subscribe(newTheme => {
-  applyTheme(newTheme);
-  
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('nodus_theme', newTheme);
-  }
-});
+  if (browser) {
+    // Apply the current theme initially
+    applyTheme(getInitialTheme());
 
-// Watch for system theme changes if using system theme
-if (typeof window !== 'undefined') {
-  window.matchMedia('(prefers-color-scheme: dark)')
-    .addEventListener('change', () => {
-      const currentTheme = localStorage.getItem('nodus_theme');
+    // Set up listener for system preference changes
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+      const currentTheme = localStorage.getItem('nodus-theme');
       if (currentTheme === THEMES.SYSTEM) {
-        applyTheme(THEMES.SYSTEM);
+        document.body.classList.toggle('dark', e.matches);
       }
     });
+  }
+
+  // Change the theme
+  const setTheme = (newTheme) => {
+    if (browser) {
+      localStorage.setItem('nodus-theme', newTheme);
+      applyTheme(newTheme);
+    }
+    set(newTheme);
+  };
+
+  return {
+    subscribe,
+    setTheme,
+    reset: () => setTheme(THEMES.SYSTEM)
+  };
 }
 
-/**
- * Set the theme
- * @param {string} newTheme - Theme to set (light, dark, or system)
- */
-export const setTheme = (newTheme) => {
-  if (Object.values(THEMES).includes(newTheme)) {
-    theme.set(newTheme);
-  } else {
-    console.error(`Invalid theme: ${newTheme}. Use one of: ${Object.values(THEMES).join(', ')}`);
-  }
-};
+export const theme = createThemeStore();
+export { setTheme } from './theme';
