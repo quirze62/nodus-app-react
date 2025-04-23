@@ -4,7 +4,11 @@ import { getNDK, addRelayToNDK, removeRelayFromNDK } from './ndk';
 
 // Default relay for Nodus - focus on the mynodus relay for our closed community
 export const DEFAULT_RELAYS = [
-  'wss://relay.mynodus.org'
+  'wss://relay.mynodus.com',  // Primary Nodus relay
+  'wss://relay.damus.io',     // Public relays for wider reach
+  'wss://relay.nostr.band',
+  'wss://nos.lol',
+  'wss://nostr.wine'
 ];
 
 /**

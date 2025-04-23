@@ -89,9 +89,13 @@ export default function PostCard({ post, onReply }: PostCardProps) {
         setLikeCount(prev => prev + 1);
         setHasLiked(true);
         logger.info(`Successfully liked post: ${post.id}`);
+      } else {
+        logger.error('Failed to create reaction - no reaction event returned');
+        alert('Could not like post. Please check your connection.');
       }
     } catch (error) {
       logger.error('Error liking post:', error);
+      alert('Error liking post. Please try again later.');
     } finally {
       setIsActionLoading(prev => ({ ...prev, like: false }));
     }
@@ -120,9 +124,13 @@ export default function PostCard({ post, onReply }: PostCardProps) {
         setRepostCount(prev => prev + 1);
         setHasReposted(true);
         logger.info(`Successfully reposted: ${post.id}`);
+      } else {
+        logger.error('Failed to create repost - no event returned');
+        alert('Could not repost. Please check your connection.');
       }
     } catch (error) {
       logger.error('Error reposting:', error);
+      alert('Error reposting. Please try again later.');
     } finally {
       setIsActionLoading(prev => ({ ...prev, repost: false }));
     }
