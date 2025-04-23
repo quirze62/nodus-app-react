@@ -240,6 +240,146 @@ export const removeRelay = async (url: string): Promise<boolean> => {
   }
 };
 
+// Create a reaction to a note (like)
+export const createReaction = async (eventId: string, content: string = "+"): Promise<NostrEvent | null> => {
+  logger.info(`Creating reaction to event ${eventId} (hybrid mode)`);
+  
+  if (!currentUser) {
+    logger.error('No current user');
+    return null;
+  }
+  
+  try {
+    // Create a reaction event with the "e" tag pointing to the original event
+    const tags = [
+      ["e", eventId], // Reference to the original event
+    ];
+    
+    // Try to publish using NDK
+    return await ndk.publishEvent(7, content, tags); // Kind 7 = reaction
+  } catch (error) {
+    logger.error('Error creating reaction:', error);
+    return null;
+  }
+};
+
+// Repost a note
+export const repostNote = async (eventId: string, eventPubkey: string): Promise<NostrEvent | null> => {
+  logger.info(`Reposting event ${eventId} (hybrid mode)`);
+  
+  if (!currentUser) {
+    logger.error('No current user');
+    return null;
+  }
+  
+  try {
+    // Create a repost event with the "e" tag pointing to the original event
+    // and "p" tag pointing to the author of the original event
+    const tags = [
+      ["e", eventId], // Reference to the original event
+      ["p", eventPubkey], // Reference to the original author
+    ];
+    
+    // Try to publish using NDK
+    return await ndk.publishEvent(6, "", tags); // Kind 6 = repost
+  } catch (error) {
+    logger.error('Error reposting note:', error);
+    return null;
+  }
+};
+
+// Reply to a note (create a thread)
+export const replyToNote = async (
+  eventId: string, 
+  eventPubkey: string, 
+  rootId: string | null, 
+  content: string,
+  additionalTags: string[][] = []
+): Promise<NostrEvent | null> => {
+  logger.info(`Replying to event ${eventId} (hybrid mode)`);
+  
+  if (!currentUser) {
+    logger.error('No current user');
+    return null;
+  }
+  
+  try {
+    // Build the tags for the reply
+    const tags = [
+      ["e", eventId, "", "reply"], // Reference to the parent event
+      ["p", eventPubkey], // Reference to the parent author
+    ];
+    
+    // If there's a root event different from the parent, add it too
+    if (rootId && rootId !== eventId) {
+      tags.push(["e", rootId, "", "root"]); // Reference to the root event
+    }
+    
+    // Add any additional tags
+    tags.push(...additionalTags);
+    
+    // Try to publish using NDK
+    return await ndk.publishNote(content, tags);
+  } catch (error) {
+    logger.error('Error replying to note:', error);
+    return null;
+  }
+};
+
+// Get reactions to a note
+export const getReactions = async (eventId: string): Promise<NostrEvent[]> => {
+  logger.info(`Getting reactions to event ${eventId} (hybrid mode)`);
+  
+  try {
+    // Try to fetch using NDK with a specific filter for reactions
+    const filter = {
+      kinds: [7], // Kind 7 = reaction
+      "#e": [eventId], // Events that reference the target event
+    };
+    
+    return await ndk.fetchEventsWithFilter(filter);
+  } catch (error) {
+    logger.error('Error getting reactions:', error);
+    return [];
+  }
+};
+
+// Get reposts of a note
+export const getReposts = async (eventId: string): Promise<NostrEvent[]> => {
+  logger.info(`Getting reposts of event ${eventId} (hybrid mode)`);
+  
+  try {
+    // Try to fetch using NDK with a specific filter for reposts
+    const filter = {
+      kinds: [6], // Kind 6 = repost
+      "#e": [eventId], // Events that reference the target event
+    };
+    
+    return await ndk.fetchEventsWithFilter(filter);
+  } catch (error) {
+    logger.error('Error getting reposts:', error);
+    return [];
+  }
+};
+
+// Get replies to a note (thread)
+export const getReplies = async (eventId: string): Promise<NostrEvent[]> => {
+  logger.info(`Getting replies to event ${eventId} (hybrid mode)`);
+  
+  try {
+    // Try to fetch using NDK with a specific filter for replies
+    const filter = {
+      kinds: [1], // Kind 1 = text note
+      "#e": [eventId], // Events that reference the target event
+    };
+    
+    return await ndk.fetchEventsWithFilter(filter);
+  } catch (error) {
+    logger.error('Error getting replies:', error);
+    return [];
+  }
+};
+
 // Subscribe to notes
 export const subscribeToNotes = (
   onEvent: (event: NostrEvent) => void,
