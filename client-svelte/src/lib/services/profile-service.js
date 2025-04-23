@@ -1,464 +1,200 @@
-import { ndkStore } from './ndk-config.js';
+import { writable, derived } from 'svelte/store';
+import { getNDK } from './ndk-config.js';
 import { db } from '../db/db.js';
-import { get } from 'svelte/store';
-import { writable } from 'svelte/store';
+import { user } from '../stores/auth.js';
 
-// Create stores for application state
+// Create stores
+export const profiles = writable(new Map());
 export const isLoading = writable(false);
 export const error = writable(null);
-export const cachedProfiles = writable(new Map());
 
-/**
- * Get a user's profile
- * @param {string} pubkey - User's public key
- * @returns {Promise<Object|null>} - Profile data or null
- */
-export const getProfile = async (pubkey) => {
-  if (!pubkey) return null;
-  
-  console.info(`[INFO] Fetching profile for ${pubkey.substring(0, 12)}...`);
-  isLoading.set(true);
-  error.set(null);
+// Create a derived store for profiles
+export const cachedProfiles = derived(profiles, $profiles => $profiles);
+
+// Default user profile template
+const DEFAULT_PROFILE = {
+  name: 'Unknown User',
+  displayName: '',
+  about: '',
+  picture: '',
+  banner: '',
+  nip05: '',
+  lud16: '',
+  website: ''
+};
+
+// Function to get a profile from Nostr
+export async function getProfile(pubkey) {
+  if (!pubkey) {
+    throw new Error('Public key is required');
+  }
   
   try {
-    // Check if we have this profile in the store
-    const profiles = get(cachedProfiles);
-    if (profiles.has(pubkey)) {
-      isLoading.set(false);
-      return profiles.get(pubkey);
-    }
+    isLoading.set(true);
+    error.set(null);
     
-    // Check if we have this profile in IndexedDB
+    // First check if we have this profile in cache
+    profiles.update(map => {
+      if (!map.has(pubkey)) {
+        map.set(pubkey, DEFAULT_PROFILE);
+      }
+      return map;
+    });
+    
+    // Try to get from IndexedDB
     const cachedProfile = await db.getProfile(pubkey);
+    
     if (cachedProfile) {
-      // Update the store
-      cachedProfiles.update(profiles => {
-        return profiles.set(pubkey, cachedProfile);
+      profiles.update(map => {
+        map.set(pubkey, { ...cachedProfile });
+        return map;
       });
-      
-      isLoading.set(false);
-      return cachedProfile;
     }
     
-    // Fetch from network
-    const ndk = get(ndkStore);
+    // Always try to get the latest profile from the network
+    const ndk = getNDK();
+    
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
-    // Create filter for user's metadata (kind 0)
+    // Create a filter for profile events
     const filter = {
       kinds: [0],
       authors: [pubkey]
     };
     
-    // Use NDK to fetch event
-    const profileEvent = await ndk.fetchEvent(filter);
+    // Subscribe to profile updates
+    const sub = ndk.subscribe(filter);
     
-    if (!profileEvent) {
-      // No profile found, create a minimal one
-      const minimalProfile = {
-        pubkey,
-        name: 'Unknown User',
-        displayName: 'Unknown User',
-        about: '',
-        picture: '',
-        updated_at: Date.now()
-      };
-      
-      // Store the minimal profile
-      await db.storeProfile(pubkey, minimalProfile);
-      
-      // Update the store
-      cachedProfiles.update(profiles => {
-        return profiles.set(pubkey, minimalProfile);
-      });
-      
-      isLoading.set(false);
-      return minimalProfile;
-    }
-    
-    try {
-      // Parse the content
-      const profileData = JSON.parse(profileEvent.content);
-      
-      // Create a profile object
-      const profile = {
-        pubkey,
-        ...profileData,
-        updated_at: profileEvent.created_at * 1000
-      };
-      
-      // Store in IndexedDB
-      await db.storeProfile(pubkey, profile);
-      
-      // Update the store
-      cachedProfiles.update(profiles => {
-        return profiles.set(pubkey, profile);
-      });
-      
-      isLoading.set(false);
-      return profile;
-    } catch (parseError) {
-      console.error(`Failed to parse profile content for ${pubkey}:`, parseError);
-      
-      // Create a minimal profile if parsing failed
-      const minimalProfile = {
-        pubkey,
-        name: 'Unknown User',
-        displayName: 'Unknown User',
-        about: '',
-        picture: '',
-        updated_at: Date.now()
-      };
-      
-      // Store the minimal profile
-      await db.storeProfile(pubkey, minimalProfile);
-      
-      // Update the store
-      cachedProfiles.update(profiles => {
-        return profiles.set(pubkey, minimalProfile);
-      });
-      
-      isLoading.set(false);
-      return minimalProfile;
-    }
-  } catch (err) {
-    console.error(`Failed to get profile for ${pubkey}:`, err);
-    error.set(err.message || 'Failed to get profile');
-    isLoading.set(false);
-    return null;
-  }
-};
-
-/**
- * Update the current user's profile
- * @param {Object} profile - Profile data to update
- * @returns {Promise<boolean>} - Success status
- */
-export const updateProfile = async (profile) => {
-  console.info('[INFO] Updating user profile');
-  isLoading.set(true);
-  error.set(null);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Ensure we have a user
-    const user = ndk.getUser();
-    if (!user) {
-      throw new Error('No authenticated user');
-    }
-    
-    // Create a new metadata event (kind 0)
-    const event = {
-      kind: 0,
-      content: JSON.stringify(profile)
-    };
-    
-    // Publish the event
-    const publishedEvent = await ndk.publish(event);
-    
-    // Update the profile in our database
-    const pubkey = await user.publicKey;
-    await db.storeProfile(pubkey, {
-      pubkey,
-      ...profile,
-      updated_at: Date.now()
-    });
-    
-    // Update the cache
-    cachedProfiles.update(profiles => {
-      return profiles.set(pubkey, {
-        pubkey,
-        ...profile,
-        updated_at: Date.now()
-      });
-    });
-    
-    isLoading.set(false);
-    return true;
-  } catch (err) {
-    console.error('Failed to update profile:', err);
-    error.set(err.message || 'Failed to update profile');
-    isLoading.set(false);
-    return false;
-  }
-};
-
-/**
- * Get a user's followers
- * @param {string} pubkey - User's public key
- * @returns {Promise<Array<string>>} - Array of follower public keys
- */
-export const getFollowers = async (pubkey) => {
-  if (!pubkey) return [];
-  
-  console.info(`[INFO] Fetching followers for ${pubkey.substring(0, 12)}...`);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create filter for contact lists (kind 3) that include this pubkey
-    const filter = {
-      kinds: [3],
-      '#p': [pubkey]
-    };
-    
-    // Use NDK to fetch events
-    const events = await ndk.fetchEvents(filter);
-    const followerEvents = Array.from(events);
-    
-    // Extract follower public keys
-    const followers = followerEvents.map(event => event.pubkey);
-    
-    return followers;
-  } catch (err) {
-    console.error(`Failed to get followers for ${pubkey}:`, err);
-    return [];
-  }
-};
-
-/**
- * Get users followed by a user
- * @param {string} pubkey - User's public key
- * @returns {Promise<Array<string>>} - Array of followed public keys
- */
-export const getFollowing = async (pubkey) => {
-  if (!pubkey) return [];
-  
-  console.info(`[INFO] Fetching following for ${pubkey.substring(0, 12)}...`);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Try to get from cache first
-    const cachedFollowing = await db.getUserFollows(pubkey);
-    if (cachedFollowing && cachedFollowing.length > 0) {
-      return cachedFollowing;
-    }
-    
-    // Create filter for contact lists (kind 3) by this pubkey
-    const filter = {
-      kinds: [3],
-      authors: [pubkey],
-      limit: 1 // We only need the most recent one
-    };
-    
-    // Use NDK to fetch events
-    const event = await ndk.fetchEvent(filter);
-    
-    if (!event) {
-      return [];
-    }
-    
-    // Extract followed public keys from the p tags
-    const following = event.tags
-      .filter(tag => tag[0] === 'p')
-      .map(tag => tag[1]);
-    
-    // Store in cache
-    await db.storeUserFollows(pubkey, following);
-    
-    return following;
-  } catch (err) {
-    console.error(`Failed to get following for ${pubkey}:`, err);
-    return [];
-  }
-};
-
-/**
- * Follow a user
- * @param {string} pubkeyToFollow - Public key of user to follow
- * @returns {Promise<boolean>} - Success status
- */
-export const followUser = async (pubkeyToFollow) => {
-  console.info(`[INFO] Following user: ${pubkeyToFollow.substring(0, 12)}...`);
-  isLoading.set(true);
-  error.set(null);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Ensure we have a user
-    const user = ndk.getUser();
-    if (!user) {
-      throw new Error('No authenticated user');
-    }
-    
-    const pubkey = await user.publicKey;
-    
-    // Get current following list
-    const currentFollowing = await getFollowing(pubkey);
-    
-    // If already following, do nothing
-    if (currentFollowing.includes(pubkeyToFollow)) {
-      isLoading.set(false);
-      return true;
-    }
-    
-    // Add the new pubkey to the list
-    const newFollowing = [...currentFollowing, pubkeyToFollow];
-    
-    // Create tags for each following
-    const tags = newFollowing.map(pk => ['p', pk]);
-    
-    // Create a new contact list event (kind 3)
-    const event = {
-      kind: 3,
-      content: '',
-      tags
-    };
-    
-    // Publish the event
-    const publishedEvent = await ndk.publish(event);
-    
-    // Update our local cache
-    await db.storeUserFollows(pubkey, newFollowing);
-    
-    isLoading.set(false);
-    return true;
-  } catch (err) {
-    console.error(`Failed to follow user ${pubkeyToFollow}:`, err);
-    error.set(err.message || 'Failed to follow user');
-    isLoading.set(false);
-    return false;
-  }
-};
-
-/**
- * Unfollow a user
- * @param {string} pubkeyToUnfollow - Public key of user to unfollow
- * @returns {Promise<boolean>} - Success status
- */
-export const unfollowUser = async (pubkeyToUnfollow) => {
-  console.info(`[INFO] Unfollowing user: ${pubkeyToUnfollow.substring(0, 12)}...`);
-  isLoading.set(true);
-  error.set(null);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Ensure we have a user
-    const user = ndk.getUser();
-    if (!user) {
-      throw new Error('No authenticated user');
-    }
-    
-    const pubkey = await user.publicKey;
-    
-    // Get current following list
-    const currentFollowing = await getFollowing(pubkey);
-    
-    // If not following, do nothing
-    if (!currentFollowing.includes(pubkeyToUnfollow)) {
-      isLoading.set(false);
-      return true;
-    }
-    
-    // Remove the pubkey from the list
-    const newFollowing = currentFollowing.filter(pk => pk !== pubkeyToUnfollow);
-    
-    // Create tags for each following
-    const tags = newFollowing.map(pk => ['p', pk]);
-    
-    // Create a new contact list event (kind 3)
-    const event = {
-      kind: 3,
-      content: '',
-      tags
-    };
-    
-    // Publish the event
-    const publishedEvent = await ndk.publish(event);
-    
-    // Update our local cache
-    await db.storeUserFollows(pubkey, newFollowing);
-    
-    isLoading.set(false);
-    return true;
-  } catch (err) {
-    console.error(`Failed to unfollow user ${pubkeyToUnfollow}:`, err);
-    error.set(err.message || 'Failed to unfollow user');
-    isLoading.set(false);
-    return false;
-  }
-};
-
-/**
- * Subscribe to profile updates
- * @param {Function} onProfileUpdate - Callback for profile updates
- * @returns {Function} - Unsubscribe function
- */
-export const subscribeToProfiles = (onProfileUpdate) => {
-  console.info('[INFO] Subscribing to profile updates');
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create filter for metadata events (kind 0)
-    const filter = {
-      kinds: [0]
-    };
-    
-    // Create the subscription
-    const subscription = ndk.subscribe(filter);
-    
-    // Handle events
-    subscription.on('event', async (event) => {
+    // Process profile events as they arrive
+    sub.on('event', event => {
       try {
-        // Parse the profile data
-        const profileData = JSON.parse(event.content);
+        const content = JSON.parse(event.content);
         
-        // Create the profile object
-        const profile = {
-          pubkey: event.pubkey,
-          ...profileData,
-          updated_at: event.created_at * 1000
-        };
-        
-        // Store in cache
-        await db.storeProfile(event.pubkey, profile);
-        
-        // Update the store
-        cachedProfiles.update(profiles => {
-          return profiles.set(event.pubkey, profile);
+        // Update the profile in the store
+        profiles.update(map => {
+          map.set(pubkey, {
+            pubkey,
+            ...DEFAULT_PROFILE,
+            ...content,
+            updated_at: event.created_at
+          });
+          return map;
         });
         
-        // Call the callback
-        onProfileUpdate(profile);
+        // Store the profile in IndexedDB
+        db.storeProfile(pubkey, {
+          ...DEFAULT_PROFILE,
+          ...content,
+          updated_at: event.created_at
+        });
       } catch (err) {
-        console.error('Failed to process profile update:', err);
+        console.error('[ERROR] Failed to process profile event:', err);
       }
     });
     
-    // Return unsubscribe function
-    return () => {
-      console.info('[INFO] Unsubscribing from profile updates');
-      subscription.stop();
-    };
-  } catch (err) {
-    console.error('Failed to subscribe to profiles:', err);
+    // Wait a bit for events to come in
+    await new Promise(resolve => setTimeout(resolve, 2000));
     
-    // Return no-op function
-    return () => {};
+    // Unsubscribe
+    sub.stop();
+    
+    // Get current value from store
+    let currentProfile;
+    profiles.subscribe(map => {
+      currentProfile = map.get(pubkey);
+    })();
+    
+    return currentProfile;
+  } catch (err) {
+    console.error('[ERROR] Failed to get profile:', err);
+    error.set(err.message || 'Failed to get profile');
+    throw err;
+  } finally {
+    isLoading.set(false);
   }
-};
+}
+
+// Function to update a profile
+export async function updateProfile(profile) {
+  try {
+    isLoading.set(true);
+    error.set(null);
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    // Create a profile event
+    const event = {
+      kind: 0,
+      created_at: Math.floor(Date.now() / 1000),
+      content: JSON.stringify(profile),
+      tags: []
+    };
+    
+    // Publish the event
+    await ndk.publish(event);
+    
+    // Update local cache
+    const pubkey = currentUser.publicKey;
+    
+    profiles.update(map => {
+      map.set(pubkey, {
+        pubkey,
+        ...profile,
+        updated_at: event.created_at
+      });
+      return map;
+    });
+    
+    // Store the profile in IndexedDB
+    await db.storeProfile(pubkey, {
+      ...profile,
+      updated_at: event.created_at
+    });
+    
+    return true;
+  } catch (err) {
+    console.error('[ERROR] Failed to update profile:', err);
+    error.set(err.message || 'Failed to update profile');
+    return false;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to get the current user's profile
+export async function getCurrentUserProfile() {
+  try {
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    // Get the user's profile
+    return await getProfile(currentUser.publicKey);
+  } catch (err) {
+    console.error('[ERROR] Failed to get current user profile:', err);
+    error.set(err.message || 'Failed to get current user profile');
+    throw err;
+  }
+}

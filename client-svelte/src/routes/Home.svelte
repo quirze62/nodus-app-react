@@ -1,82 +1,121 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import { navigate } from 'svelte-routing';
   import Layout from '../components/Layout.svelte';
-  import { loadNotes, notes, isLoading, error, subscribeToNotes } from '../lib/services/nostr-event-service.js';
+  import { loadNotes, events, isLoading, error } from '../lib/services/nostr-event-service.js';
   import { getProfile, cachedProfiles } from '../lib/services/profile-service.js';
-  import { isAuthenticated } from '../lib/stores/auth.js';
-  import { format } from 'date-fns';
+  import { isAuthenticated, user } from '../lib/stores/auth.js';
+  import { formatDistanceToNow } from 'date-fns';
   
-  let unsubscribe = null;
+  // State for new post
+  let newPostContent = '';
+  let isPostingNote = false;
+  let postError = '';
   
+  // Function to load the timeline
+  async function loadTimeline() {
+    try {
+      await loadNotes(50);
+    } catch (err) {
+      console.error('[ERROR] Failed to load timeline:', err);
+    }
+  }
+  
+  // Function to format date
+  function formatDate(timestamp) {
+    if (!timestamp) return '';
+    
+    // Convert from seconds to milliseconds if needed
+    const date = new Date(timestamp * 1000);
+    
+    return formatDistanceToNow(date, { addSuffix: true });
+  }
+  
+  // Function to get profile for a note
+  async function getProfileForNote(pubkey) {
+    if (!pubkey) return;
+    
+    try {
+      await getProfile(pubkey);
+    } catch (err) {
+      console.error('[ERROR] Failed to get profile:', err);
+    }
+  }
+  
+  // Load the timeline on mount
   onMount(async () => {
-    // Load initial notes
-    await loadNotes(30);
+    await loadTimeline();
     
-    // Subscribe to new notes
-    unsubscribe = subscribeToNotes(
-      (newNote) => {
-        // Add the new note to the top of the list
-        notes.update(currentNotes => [newNote, ...currentNotes]);
-      }
-    );
-    
-    // Pre-fetch profiles for note authors
-    fetchProfiles();
-  });
-  
-  onDestroy(() => {
-    if (unsubscribe) {
-      unsubscribe();
+    // For each note, load the author's profile
+    for (const note of $events) {
+      getProfileForNote(note.pubkey);
     }
   });
   
-  // Function to format a timestamp
-  function formatDate(timestamp) {
-    if (!timestamp) return '';
-    // Convert to milliseconds if needed
-    const date = new Date(timestamp * 1000);
-    return format(date, 'MMM d, yyyy h:mm a');
-  }
-  
-  // Function to fetch profiles for note authors
-  async function fetchProfiles() {
-    // Extract unique pubkeys from notes
-    const pubkeys = [...new Set($notes.map(note => note.pubkey))];
-    
-    // Fetch profiles in parallel
-    await Promise.all(pubkeys.map(pubkey => getProfile(pubkey)));
-  }
-  
   // Function to get author name
   function getAuthorName(pubkey) {
+    if (!pubkey) return 'Unknown';
+    
     const profiles = $cachedProfiles;
     if (profiles.has(pubkey)) {
       const profile = profiles.get(pubkey);
       return profile.displayName || profile.name || 'Unknown User';
     }
+    
+    // Start loading profile if not already in cache
+    getProfileForNote(pubkey);
+    
     return 'Unknown User';
   }
   
   // Function to get author picture
   function getAuthorPicture(pubkey) {
+    if (!pubkey) return '';
+    
     const profiles = $cachedProfiles;
     if (profiles.has(pubkey)) {
       return profiles.get(pubkey).picture || '';
     }
+    
     return '';
+  }
+  
+  // Function to format pubkey
+  function formatPubkey(pubkey) {
+    if (!pubkey) return '';
+    return `${pubkey.substring(0, 6)}...${pubkey.substring(pubkey.length - 6)}`;
   }
 </script>
 
-<Layout isLoading={$isLoading} title="Home">
-  <div class="home-page">
+<Layout title="Home" isLoading={$isLoading}>
+  <div class="timeline">
     {#if $isAuthenticated}
-      <div class="post-form card">
-        <h3>Share a Note</h3>
-        <div class="post-input">
-          <textarea placeholder="What's on your mind?"></textarea>
+      <div class="compose-container card">
+        <div class="compose-header">
+          <h3>What's on your mind?</h3>
         </div>
-        <div class="post-actions">
-          <button class="btn">Post</button>
+        
+        <div class="compose-body">
+          <textarea 
+            bind:value={newPostContent} 
+            placeholder="Share something with the Nostr community..."
+            rows="3"
+          ></textarea>
+        </div>
+        
+        {#if postError}
+          <div class="error-message">
+            <p>{postError}</p>
+          </div>
+        {/if}
+        
+        <div class="compose-footer">
+          <button 
+            class="btn post-btn" 
+            disabled={!newPostContent.trim() || isPostingNote}
+          >
+            {isPostingNote ? 'Posting...' : 'Post'}
+          </button>
         </div>
       </div>
     {/if}
@@ -84,101 +123,169 @@
     {#if $error}
       <div class="error-message card">
         <p>{$error}</p>
-        <button class="btn" on:click={() => loadNotes()}>Try Again</button>
+        <button class="btn" on:click={loadTimeline}>Retry</button>
       </div>
     {/if}
     
-    <div class="feed">
-      {#if $notes && $notes.length > 0}
-        {#each $notes as note}
-          <div class="note-card card">
-            <div class="note-header">
-              <div class="author-avatar">
-                {#if getAuthorPicture(note.pubkey)}
-                  <img src={getAuthorPicture(note.pubkey)} alt="Avatar" />
-                {:else}
-                  <div class="avatar-placeholder"></div>
-                {/if}
-              </div>
-              <div class="note-meta">
-                <div class="author-name">{getAuthorName(note.pubkey)}</div>
-                <div class="note-time">{formatDate(note.created_at)}</div>
-              </div>
+    {#if !$isLoading && $events.length === 0}
+      <div class="empty-timeline card">
+        <h3>No posts to show</h3>
+        <p>When you connect to relays and follow users, their posts will appear here.</p>
+        
+        {#if !$isAuthenticated}
+          <button class="btn" on:click={() => navigate('/login')}>
+            Login to Nodus
+          </button>
+        {/if}
+      </div>
+    {/if}
+    
+    <div class="posts-list">
+      {#each $events as note}
+        <div class="post-item card">
+          <div class="post-header">
+            <div class="author-avatar">
+              {#if getAuthorPicture(note.pubkey)}
+                <img src={getAuthorPicture(note.pubkey)} alt="Avatar" />
+              {:else}
+                <div class="avatar-placeholder"></div>
+              {/if}
             </div>
-            <div class="note-content">
-              <p>{note.content}</p>
+            
+            <div class="author-info">
+              <div class="author-name">{getAuthorName(note.pubkey)}</div>
+              <div class="author-pubkey">{formatPubkey(note.pubkey)}</div>
             </div>
-            <div class="note-actions">
-              <button class="action-btn">❤️ Like</button>
-              <button class="action-btn">🔄 Repost</button>
-              <button class="action-btn">💬 Reply</button>
+            
+            <div class="post-time">
+              {formatDate(note.created_at)}
             </div>
           </div>
-        {/each}
-        <button class="btn btn-outline load-more" on:click={() => loadNotes(50)}>
-          Load More
-        </button>
-      {:else if !$isLoading}
-        <div class="empty-state card">
-          <p>No notes found. Check your relay connections or follow some users to see their posts.</p>
+          
+          <div class="post-content">
+            {note.content}
+          </div>
+          
+          <div class="post-actions">
+            <button class="action-btn">
+              <span class="action-icon">💬</span>
+              <span class="action-label">Reply</span>
+            </button>
+            
+            <button class="action-btn">
+              <span class="action-icon">🔄</span>
+              <span class="action-label">Repost</span>
+            </button>
+            
+            <button class="action-btn">
+              <span class="action-icon">❤️</span>
+              <span class="action-label">Like</span>
+            </button>
+          </div>
         </div>
-      {/if}
+      {/each}
     </div>
   </div>
 </Layout>
 
 <style>
-  .home-page {
+  .timeline {
     max-width: 600px;
     margin: 0 auto;
   }
   
-  .post-form {
+  .compose-container {
     margin-bottom: 2rem;
   }
   
-  .post-form h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
+  .compose-header {
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #eee;
   }
   
-  .post-input {
-    margin-bottom: 1rem;
+  :global(body.dark) .compose-header {
+    border-bottom-color: #333;
   }
   
-  .post-input textarea {
+  .compose-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+  
+  .compose-body {
+    padding: 1.5rem;
+  }
+  
+  .compose-body textarea {
     width: 100%;
-    min-height: 100px;
-    padding: 0.75rem;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    resize: vertical;
+    padding: 1rem;
+    border: 1px solid #eee;
+    border-radius: 0.5rem;
     font-family: inherit;
+    font-size: 1rem;
+    resize: vertical;
+    background-color: transparent;
   }
   
-  :global(body.dark) .post-input textarea {
-    background-color: #333;
+  :global(body.dark) .compose-body textarea {
+    border-color: #333;
     color: #eee;
-    border-color: #555;
   }
   
-  .post-actions {
+  .compose-footer {
+    padding: 0 1.5rem 1.5rem;
     display: flex;
     justify-content: flex-end;
   }
   
-  .feed {
+  .post-btn {
+    padding: 0.5rem 2rem;
+  }
+  
+  .error-message {
+    margin: 1rem 1.5rem;
+    padding: 1rem;
+    background-color: #ffebee;
+    color: #d32f2f;
+    border-radius: 0.5rem;
+  }
+  
+  :global(body.dark) .error-message {
+    background-color: rgba(211, 47, 47, 0.2);
+  }
+  
+  .empty-timeline {
+    text-align: center;
+    padding: 3rem 2rem;
+  }
+  
+  .empty-timeline h3 {
+    margin-top: 0;
+    color: var(--nodus-blue);
+  }
+  
+  .empty-timeline p {
+    margin-bottom: 2rem;
+    color: #666;
+  }
+  
+  :global(body.dark) .empty-timeline p {
+    color: #aaa;
+  }
+  
+  .posts-list {
     display: flex;
     flex-direction: column;
     gap: 1rem;
   }
   
-  .note-card {
+  .post-item {
     padding: 1.5rem;
   }
   
-  .note-header {
+  .post-header {
     display: flex;
+    align-items: center;
     margin-bottom: 1rem;
   }
   
@@ -207,7 +314,7 @@
     background-color: var(--nodus-blue);
   }
   
-  .note-meta {
+  .author-info {
     flex: 1;
   }
   
@@ -216,44 +323,53 @@
     margin-bottom: 0.25rem;
   }
   
-  .note-time {
-    font-size: 0.875rem;
+  .author-pubkey {
+    font-size: 0.75rem;
     color: #666;
+    font-family: monospace;
   }
   
-  :global(body.dark) .note-time {
+  :global(body.dark) .author-pubkey {
     color: #aaa;
   }
   
-  .note-content {
-    margin-bottom: 1rem;
+  .post-time {
+    font-size: 0.75rem;
+    color: #666;
+  }
+  
+  :global(body.dark) .post-time {
+    color: #aaa;
+  }
+  
+  .post-content {
+    margin-bottom: 1.5rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
     word-break: break-word;
   }
   
-  .note-content p {
-    margin: 0;
-    white-space: pre-wrap;
-  }
-  
-  .note-actions {
+  .post-actions {
     display: flex;
-    gap: 1rem;
-    border-top: 1px solid #eee;
+    gap: 1.5rem;
     padding-top: 1rem;
+    border-top: 1px solid #eee;
   }
   
-  :global(body.dark) .note-actions {
+  :global(body.dark) .post-actions {
     border-top-color: #333;
   }
   
   .action-btn {
     background: none;
     border: none;
+    display: flex;
+    align-items: center;
     color: #666;
-    cursor: pointer;
     font-size: 0.875rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 9999px;
     transition: background-color 0.2s;
   }
   
@@ -266,40 +382,36 @@
   }
   
   :global(body.dark) .action-btn:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(255, 255, 255, 0.05);
   }
   
-  .error-message {
-    color: #d32f2f;
-    margin-bottom: 1rem;
+  .action-icon {
+    font-size: 1rem;
+    margin-right: 0.5rem;
   }
   
-  .empty-state {
-    text-align: center;
-    padding: 3rem 1.5rem;
-    color: #666;
-  }
-  
-  :global(body.dark) .empty-state {
-    color: #aaa;
-  }
-  
-  .load-more {
-    margin-top: 1rem;
-    align-self: center;
-  }
-  
-  .btn-outline {
-    background-color: transparent;
-    border: 1px solid var(--nodus-blue);
-    color: var(--nodus-blue);
-  }
-  
-  .btn-outline:hover {
-    background-color: rgba(20, 92, 232, 0.05);
-  }
-  
-  :global(body.dark) .btn-outline:hover {
-    background-color: rgba(20, 92, 232, 0.1);
+  @media (max-width: 768px) {
+    .timeline {
+      max-width: 100%;
+    }
+    
+    .post-item, .compose-container {
+      border-radius: 0;
+      margin-left: -1rem;
+      margin-right: -1rem;
+    }
+    
+    .action-label {
+      display: none;
+    }
+    
+    .action-icon {
+      font-size: 1.25rem;
+      margin-right: 0;
+    }
+    
+    .post-actions {
+      justify-content: space-around;
+    }
   }
 </style>

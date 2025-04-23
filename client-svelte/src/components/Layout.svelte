@@ -1,265 +1,374 @@
 <script>
   import { onMount } from 'svelte';
-  import { Link } from 'svelte-routing';
-  import { theme, setTheme, THEMES } from '../lib/stores/theme.js';
-  import { isAuthenticated, user } from '../lib/stores/auth.js';
+  import { navigate } from 'svelte-routing';
+  import { isAuthenticated } from '../lib/stores/auth.js';
+  import { theme } from '../lib/stores/theme.js';
   
-  export let isLoading = false;
+  // Props
   export let title = 'Nodus';
+  export let isLoading = false;
+  export let showNavbar = true;
   
-  // Function to toggle dark mode
-  function toggleDarkMode() {
-    if ($theme === THEMES.DARK) {
-      setTheme(THEMES.LIGHT);
-    } else {
-      setTheme(THEMES.DARK);
-    }
-  }
+  // Active navigation item
+  let activeItem = '';
   
   onMount(() => {
-    // Initialize any layout-specific functionality
+    // Determine active navigation item based on URL
+    const path = window.location.pathname;
+    
+    if (path === '/') {
+      activeItem = 'home';
+    } else if (path.startsWith('/messages')) {
+      activeItem = 'messages';
+    } else if (path.startsWith('/profile')) {
+      activeItem = 'profile';
+    } else if (path.startsWith('/settings')) {
+      activeItem = 'settings';
+    }
   });
 </script>
 
-<div class="layout">
-  <header class="main-header">
-    <div class="container">
-      <div class="logo">
-        <Link to="/">
-          <h1>Nodus</h1>
-        </Link>
-      </div>
-      
-      <nav class="main-nav">
-        <Link to="/">Home</Link>
-        {#if $isAuthenticated}
-          <Link to="/profile">Profile</Link>
-          <Link to="/messages">Messages</Link>
-        {/if}
-        <Link to="/settings">Settings</Link>
-      </nav>
-      
-      <div class="header-actions">
-        <button class="theme-toggle" on:click={toggleDarkMode} title="Toggle dark mode">
-          {#if $theme === THEMES.DARK}
-            🌙
-          {:else}
-            ☀️
-          {/if}
+<div class="app-container">
+  <header class="app-header">
+    <div class="logo" on:click={() => navigate('/')}>
+      <span class="logo-text">nodus</span>
+    </div>
+    
+    <div class="header-right">
+      {#if $isAuthenticated}
+        <button class="compose-btn" on:click={() => navigate('/compose')}>
+          <span class="compose-icon">+</span>
+          <span class="compose-text">New Post</span>
         </button>
-        
-        {#if $isAuthenticated}
-          <div class="user-pill">
-            <Link to="/profile">
-              {#if $user && $user.profile && $user.profile.name}
-                {$user.profile.name}
-              {:else}
-                Profile
-              {/if}
-            </Link>
-          </div>
-        {:else}
-          <Link to="/login" class="btn">Login</Link>
-        {/if}
-      </div>
+      {/if}
     </div>
   </header>
   
   <main class="main-content">
-    {#if isLoading}
-      <div class="loading-overlay">
-        <div class="spinner"></div>
-        <p>Loading...</p>
-      </div>
+    {#if showNavbar}
+      <nav class="sidebar">
+        <ul class="nav-list">
+          <li class="nav-item" class:active={activeItem === 'home'}>
+            <a href="/" on:click|preventDefault={() => navigate('/')}>
+              <span class="nav-icon">🏠</span>
+              <span class="nav-text">Home</span>
+            </a>
+          </li>
+          
+          {#if $isAuthenticated}
+            <li class="nav-item" class:active={activeItem === 'profile'}>
+              <a href="/profile" on:click|preventDefault={() => navigate('/profile')}>
+                <span class="nav-icon">👤</span>
+                <span class="nav-text">Profile</span>
+              </a>
+            </li>
+            
+            <li class="nav-item" class:active={activeItem === 'messages'}>
+              <a href="/messages" on:click|preventDefault={() => navigate('/messages')}>
+                <span class="nav-icon">✉️</span>
+                <span class="nav-text">Messages</span>
+              </a>
+            </li>
+            
+            <li class="nav-item" class:active={activeItem === 'settings'}>
+              <a href="/settings" on:click|preventDefault={() => navigate('/settings')}>
+                <span class="nav-icon">⚙️</span>
+                <span class="nav-text">Settings</span>
+              </a>
+            </li>
+          {/if}
+          
+          {#if !$isAuthenticated}
+            <li class="nav-item" class:active={activeItem === 'login'}>
+              <a href="/login" on:click|preventDefault={() => navigate('/login')}>
+                <span class="nav-icon">🔑</span>
+                <span class="nav-text">Login</span>
+              </a>
+            </li>
+          {/if}
+        </ul>
+      </nav>
     {/if}
     
-    <div class="container">
-      <h2 class="page-title">{title}</h2>
-      <slot></slot>
+    <div class="content">
+      <div class="content-header">
+        <h1 class="page-title">{title}</h1>
+      </div>
+      
+      {#if isLoading}
+        <div class="loading-indicator">
+          <div class="spinner"></div>
+          <p>Loading...</p>
+        </div>
+      {:else}
+        <div class="content-body">
+          <slot></slot>
+        </div>
+      {/if}
     </div>
   </main>
-  
-  <footer class="main-footer">
-    <div class="container">
-      <p>&copy; 2025 Nodus - A modern Nostr client</p>
-      <div class="footer-links">
-        <a href="https://github.com/nodus/nodus-app" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="https://docs.mynodus.com" target="_blank" rel="noopener noreferrer">Documentation</a>
-        <Link to="/about">About</Link>
-      </div>
-    </div>
-  </footer>
 </div>
 
 <style>
-  .layout {
+  .app-container {
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    background-color: #f5f5f5;
   }
   
-  .main-header {
-    background-color: var(--nodus-blue);
-    color: white;
-    padding: 1rem 0;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  :global(body.dark) .app-container {
+    background-color: #111;
+    color: #eee;
   }
   
-  .main-header .container {
+  .app-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-  }
-  
-  .logo h1 {
-    margin: 0;
-    font-size: 1.5rem;
-  }
-  
-  .logo a {
-    color: white;
-    text-decoration: none;
-  }
-  
-  .main-nav {
-    display: flex;
-    gap: 1.5rem;
-  }
-  
-  .main-nav a {
-    color: white;
-    text-decoration: none;
-    font-weight: 500;
-    position: relative;
-  }
-  
-  .main-nav a:hover {
-    text-decoration: underline;
-  }
-  
-  .main-nav a:global(.active) {
-    font-weight: 700;
-  }
-  
-  .main-nav a:global(.active)::after {
-    content: '';
-    position: absolute;
-    bottom: -5px;
-    left: 0;
-    width: 100%;
-    height: 2px;
+    padding: 1rem 2rem;
     background-color: white;
+    border-bottom: 1px solid #eee;
+    position: sticky;
+    top: 0;
+    z-index: 100;
   }
   
-  .header-actions {
+  :global(body.dark) .app-header {
+    background-color: #1a1a1a;
+    border-bottom-color: #333;
+  }
+  
+  .logo {
+    font-size: 1.5rem;
+    font-weight: bold;
+    color: var(--nodus-blue);
+    cursor: pointer;
+    user-select: none;
+  }
+  
+  .compose-btn {
+    background-color: var(--nodus-blue);
+    color: white;
+    border: none;
+    border-radius: 24px;
+    padding: 0.5rem 1.25rem;
+    font-size: 1rem;
+    font-weight: 600;
     display: flex;
     align-items: center;
-    gap: 1rem;
-  }
-  
-  .theme-toggle {
-    background: none;
-    border: none;
-    color: white;
-    font-size: 1.25rem;
     cursor: pointer;
-    padding: 0.25rem 0.5rem;
+    transition: background-color 0.2s;
   }
   
-  .user-pill {
-    background-color: rgba(255, 255, 255, 0.2);
-    border-radius: 20px;
-    padding: 0.4rem 1rem;
+  .compose-btn:hover {
+    background-color: #0e47b8;
   }
   
-  .user-pill a {
-    color: white;
-    text-decoration: none;
-    font-weight: 500;
+  .compose-icon {
+    font-size: 1.25rem;
+    margin-right: 0.5rem;
   }
   
   .main-content {
+    display: flex;
     flex: 1;
-    padding: 2rem 0;
-    position: relative;
   }
   
-  .loading-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: rgba(255, 255, 255, 0.8);
+  .sidebar {
+    width: 250px;
+    padding: 2rem 1rem 1rem 2rem;
+    border-right: 1px solid #eee;
+  }
+  
+  :global(body.dark) .sidebar {
+    border-right-color: #333;
+  }
+  
+  .nav-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  
+  .nav-item {
+    margin-bottom: 1rem;
+  }
+  
+  .nav-item a {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-radius: 1.5rem;
+    text-decoration: none;
+    color: #333;
+    transition: background-color 0.2s;
+  }
+  
+  :global(body.dark) .nav-item a {
+    color: #eee;
+  }
+  
+  .nav-item a:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+  
+  :global(body.dark) .nav-item a:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+  
+  .nav-item.active a {
+    font-weight: 600;
+    color: var(--nodus-blue);
+  }
+  
+  .nav-icon {
+    margin-right: 1rem;
+    font-size: 1.25rem;
+    width: 1.5rem;
+    text-align: center;
+  }
+  
+  .content {
+    flex: 1;
+    padding: 2rem;
+    min-width: 0;
+  }
+  
+  .content-header {
+    margin-bottom: 2rem;
+  }
+  
+  .page-title {
+    margin: 0;
+    font-size: 1.75rem;
+    color: var(--nodus-blue);
+  }
+  
+  .loading-indicator {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    padding: 3rem;
   }
   
-  :global(body.dark) .loading-overlay {
-    background-color: rgba(0, 0, 0, 0.7);
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-left-color: var(--nodus-blue);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+  }
+  
+  :global(body.dark) .spinner {
+    border-color: rgba(255, 255, 255, 0.1);
+    border-left-color: var(--nodus-blue);
+  }
+  
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  
+  /* Card styling for consistent UI */
+  :global(.card) {
+    background-color: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+  }
+  
+  :global(body.dark) :global(.card) {
+    background-color: #1a1a1a;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  }
+  
+  /* Button styling for consistent UI */
+  :global(.btn) {
+    background-color: var(--nodus-blue);
     color: white;
-  }
-  
-  .page-title {
-    margin-top: 0;
-    margin-bottom: 1.5rem;
-    font-size: 2rem;
-    color: var(--nodus-blue);
-  }
-  
-  .main-footer {
-    background-color: #f5f5f5;
-    padding: 1.5rem 0;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
     font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s;
   }
   
-  :global(body.dark) .main-footer {
-    background-color: #222;
-    color: #aaa;
+  :global(.btn:hover) {
+    background-color: #0e47b8;
   }
   
-  .main-footer .container {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  :global(.btn:disabled) {
+    background-color: #ccc;
+    cursor: not-allowed;
   }
   
-  .footer-links {
-    display: flex;
-    gap: 1.5rem;
+  :global(body.dark) :global(.btn:disabled) {
+    background-color: #555;
   }
   
-  .footer-links a {
-    color: #666;
-    text-decoration: none;
-  }
-  
-  :global(body.dark) .footer-links a {
-    color: #aaa;
-  }
-  
-  .footer-links a:hover {
-    text-decoration: underline;
-  }
-  
+  /* Responsive adjustments */
   @media (max-width: 768px) {
-    .main-header .container {
-      flex-direction: column;
-      gap: 1rem;
+    .app-header {
+      padding: 1rem;
     }
     
-    .main-nav {
+    .main-content {
+      flex-direction: column;
+    }
+    
+    .sidebar {
       width: 100%;
-      justify-content: space-around;
+      padding: 1rem;
+      border-right: none;
+      border-bottom: 1px solid #eee;
     }
     
-    .main-footer .container {
-      flex-direction: column;
-      gap: 1rem;
-      text-align: center;
+    :global(body.dark) .sidebar {
+      border-bottom-color: #333;
+    }
+    
+    .nav-list {
+      display: flex;
+      justify-content: space-between;
+    }
+    
+    .nav-item {
+      margin-bottom: 0;
+    }
+    
+    .nav-text {
+      display: none;
+    }
+    
+    .nav-icon {
+      margin-right: 0;
+    }
+    
+    .content {
+      padding: 1rem;
+    }
+    
+    .compose-text {
+      display: none;
+    }
+    
+    .compose-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      padding: 0;
+      justify-content: center;
+    }
+    
+    .compose-icon {
+      margin-right: 0;
     }
   }
 </style>

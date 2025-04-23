@@ -1,113 +1,173 @@
-import { ndkStore } from './ndk-config.js';
+import { writable, derived } from 'svelte/store';
+import { getNDK } from './ndk-config.js';
 import { db } from '../db/db.js';
-import { get } from 'svelte/store';
-import { writable } from 'svelte/store';
+import { user } from '../stores/auth.js';
 
-// Create stores for application state
+// Create stores
+export const events = writable([]);
+export const userEvents = writable([]);
 export const isLoading = writable(false);
 export const error = writable(null);
-export const notes = writable([]);
 
-/**
- * Load recent notes from the Nostr network
- * @param {number} limit - Maximum number of notes to load
- * @returns {Promise<Array>} - Array of Nostr events
- */
-export const loadNotes = async (limit = 50) => {
-  console.info(`[INFO] Fetching ${limit} recent notes`);
-  isLoading.set(true);
-  error.set(null);
-  
+// Function to load notes (kind 1 events)
+export async function loadNotes(limit = 50) {
   try {
-    const ndk = get(ndkStore);
+    console.info('[INFO] Fetching', limit, 'recent notes');
+    isLoading.set(true);
+    error.set(null);
+    
+    // Try to get from local cache first
+    const cachedEvents = await db.getEventsByKind(1, limit);
+    
+    if (cachedEvents && cachedEvents.length > 0) {
+      events.set(cachedEvents);
+    }
+    
+    // Get from network
+    const ndk = getNDK();
+    
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
-    // Try to get cached events first
-    const cachedEvents = await db.getEventsByKind(1, limit);
-    if (cachedEvents.length > 0) {
-      console.info(`[INFO] Found ${cachedEvents.length} cached notes`);
-      notes.set(cachedEvents);
-    }
+    console.info('[INFO] Getting notes with NDK subscription');
     
-    // Get notes with NDK subscription
-    console.info(`[INFO] Getting notes with NDK subscription`);
-    
-    // Create a filter for text notes (kind 1)
+    // Create a filter for notes
     const filter = {
       kinds: [1],
       limit
     };
     
-    // Use a promise to handle the subscription
-    const fetchedNotes = await new Promise((resolve, reject) => {
-      const fetchedEvents = [];
-      const timeoutId = setTimeout(() => {
-        // Resolve with what we have after 5 seconds
-        resolve(fetchedEvents);
-      }, 5000);
+    // Create a subscription
+    const sub = ndk.subscribe(filter);
+    
+    // Collect events
+    const newEvents = [];
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
       
-      // Subscribe to events
-      const subscription = ndk.subscribe(filter, {
-        closeOnEose: true
-      });
+      // Add to our local array
+      newEvents.push(event);
       
-      subscription.on('event', async (event) => {
-        console.info(`[INFO] Received note: ${event.content.substring(0, 30)}...`);
-        fetchedEvents.push(event);
-        
-        // Cache the event
-        await db.storeEvent(event);
-      });
-      
-      subscription.on('eose', () => {
-        clearTimeout(timeoutId);
-        resolve(fetchedEvents);
-      });
-      
-      // Handle errors
-      subscription.on('error', (err) => {
-        console.error('Subscription error:', err);
-        reject(err);
-      });
+      // Log for debugging
+      console.info('[INFO] Received note:', event.content.substring(0, 30) + '...');
     });
     
-    // Combine cached and new notes, sorting by created_at
-    const allNotes = [...(cachedEvents || []), ...(fetchedNotes || [])];
-    const uniqueNotes = Array.from(
-      new Map(allNotes.map(note => [note.id, note])).values()
-    );
+    // Wait for events to be collected
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Stop the subscription
+    sub.stop();
     
     // Sort by created_at (newest first)
-    uniqueNotes.sort((a, b) => b.created_at - a.created_at);
+    newEvents.sort((a, b) => b.created_at - a.created_at);
     
     // Update the store
-    notes.set(uniqueNotes.slice(0, limit));
+    events.set(newEvents);
     
-    isLoading.set(false);
-    return uniqueNotes.slice(0, limit);
+    return newEvents;
   } catch (err) {
-    console.error('Failed to load notes:', err);
+    console.error('[ERROR] Failed to load notes:', err);
     error.set(err.message || 'Failed to load notes');
-    isLoading.set(false);
     return [];
+  } finally {
+    isLoading.set(false);
   }
-};
+}
 
-/**
- * Post a new note to the Nostr network
- * @param {string} content - Note content
- * @param {Array} tags - Note tags (optional)
- * @returns {Promise<Object>} - The published Nostr event
- */
-export const postNote = async (content, tags = []) => {
-  console.info(`[INFO] Posting note: ${content.substring(0, 30)}...`);
-  isLoading.set(true);
-  error.set(null);
+// Function to load notes from a specific user
+export async function loadUserNotes(pubkey, limit = 50) {
+  if (!pubkey) {
+    throw new Error('Public key is required');
+  }
   
   try {
-    const ndk = get(ndkStore);
+    isLoading.set(true);
+    error.set(null);
+    
+    // Try to get from local cache first
+    const cachedEvents = await db.getEventsByPubkey(pubkey, limit);
+    
+    if (cachedEvents && cachedEvents.length > 0) {
+      userEvents.set(cachedEvents.filter(event => event.kind === 1));
+    }
+    
+    // Get from network
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create a filter for user notes
+    const filter = {
+      kinds: [1],
+      authors: [pubkey],
+      limit
+    };
+    
+    // Create a subscription
+    const sub = ndk.subscribe(filter);
+    
+    // Collect events
+    const newEvents = [];
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
+      
+      // Add to our local array
+      newEvents.push(event);
+    });
+    
+    // Wait for events to be collected
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Stop the subscription
+    sub.stop();
+    
+    // Sort by created_at (newest first)
+    newEvents.sort((a, b) => b.created_at - a.created_at);
+    
+    // Update the store
+    userEvents.set(newEvents);
+    
+    return newEvents;
+  } catch (err) {
+    console.error('[ERROR] Failed to load user notes:', err);
+    error.set(err.message || 'Failed to load user notes');
+    return [];
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to post a note
+export async function postNote(content, tags = []) {
+  if (!content) {
+    throw new Error('Content is required');
+  }
+  
+  try {
+    isLoading.set(true);
+    error.set(null);
+    
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    const ndk = getNDK();
+    
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
@@ -115,152 +175,330 @@ export const postNote = async (content, tags = []) => {
     // Create the event
     const event = {
       kind: 1,
+      created_at: Math.floor(Date.now() / 1000),
       content,
-      tags: tags || []
+      tags
     };
     
     // Publish the event
-    const publishedEvent = await ndk.publish(event);
+    await ndk.publish(event);
     
-    // Cache the event
-    await db.storeEvent(publishedEvent);
+    // Store the event
+    await db.storeEvent(event);
     
-    // Update the notes store
-    notes.update(currentNotes => [publishedEvent, ...currentNotes]);
-    
-    isLoading.set(false);
-    return publishedEvent;
-  } catch (err) {
-    console.error('Failed to post note:', err);
-    error.set(err.message || 'Failed to post note');
-    isLoading.set(false);
-    return null;
-  }
-};
-
-/**
- * Get notes by a specific user
- * @param {string} pubkey - User's public key
- * @param {number} limit - Maximum number of notes to load
- * @returns {Promise<Array>} - Array of Nostr events
- */
-export const getNotesByUser = async (pubkey, limit = 50) => {
-  console.info(`[INFO] Fetching notes by user: ${pubkey.substring(0, 10)}...`);
-  isLoading.set(true);
-  error.set(null);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Try to get cached events first
-    const cachedEvents = await db.getEventsByPubkey(pubkey, limit);
-    
-    // Create a filter for user's text notes (kind 1)
-    const filter = {
-      kinds: [1],
-      authors: [pubkey],
-      limit
-    };
-    
-    // Use NDK to fetch events
-    const events = await ndk.fetchEvents(filter);
-    const fetchedEvents = Array.from(events);
-    
-    // Cache the fetched events
-    for (const event of fetchedEvents) {
-      await db.storeEvent(event);
-    }
-    
-    // Combine cached and new notes, sorting by created_at
-    const allNotes = [...(cachedEvents || []), ...(fetchedEvents || [])];
-    const uniqueNotes = Array.from(
-      new Map(allNotes.map(note => [note.id, note])).values()
-    );
-    
-    // Sort by created_at (newest first)
-    uniqueNotes.sort((a, b) => b.created_at - a.created_at);
-    
-    isLoading.set(false);
-    return uniqueNotes.slice(0, limit);
-  } catch (err) {
-    console.error(`Failed to get notes by user ${pubkey}:`, err);
-    error.set(err.message || 'Failed to get user notes');
-    isLoading.set(false);
-    return [];
-  }
-};
-
-/**
- * Subscribe to real-time note updates
- * @param {Function} onEvent - Callback for new events
- * @param {Function} onEose - Callback for end of stored events (optional)
- * @param {Object} filter - Custom filter (optional)
- * @returns {Function} - Unsubscribe function
- */
-export const subscribeToNotes = (onEvent, onEose, filter = { kinds: [1] }) => {
-  console.info(`[INFO] Subscribing to notes with filter:`, filter);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create the subscription
-    const subscription = ndk.subscribe(filter);
-    
-    // Handle events
-    subscription.on('event', async (event) => {
-      console.info(`[INFO] Received event in subscription: ${event.id.substring(0, 10)}...`);
-      
-      // Cache the event
-      await db.storeEvent(event);
-      
-      // Call the callback
-      onEvent(event);
+    // Update the events store
+    events.update(list => {
+      // Add to the beginning (newest first)
+      list.unshift(event);
+      return list;
     });
     
-    // Handle EOSE (End of Stored Events)
-    if (onEose) {
-      subscription.on('eose', () => {
-        console.info('[INFO] End of stored events');
-        onEose();
-      });
-    }
+    // Update user events store
+    userEvents.update(list => {
+      // Add to the beginning (newest first)
+      list.unshift(event);
+      return list;
+    });
     
-    // Return unsubscribe function
-    return () => {
-      console.info('[INFO] Unsubscribing from notes');
-      subscription.stop();
-    };
+    return event;
   } catch (err) {
-    console.error('Failed to subscribe to notes:', err);
-    error.set(err.message || 'Failed to subscribe to notes');
-    
-    // Return no-op function
-    return () => {};
+    console.error('[ERROR] Failed to post note:', err);
+    error.set(err.message || 'Failed to post note');
+    return null;
+  } finally {
+    isLoading.set(false);
   }
-};
+}
 
-/**
- * Create a reply to an existing note
- * @param {string} eventId - ID of event to reply to
- * @param {string} eventPubkey - Pubkey of event author
- * @param {string} rootId - ID of root event in thread (optional)
- * @param {string} content - Reply content
- * @param {Array} additionalTags - Additional tags to include (optional)
- * @returns {Promise<Object>} - The published Nostr event
- */
-export const replyToNote = async (eventId, eventPubkey, rootId, content, additionalTags = []) => {
-  console.info(`[INFO] Replying to note: ${eventId.substring(0, 10)}...`);
-  isLoading.set(true);
-  error.set(null);
+// Function to get reactions to an event
+export async function getReactions(eventId) {
+  if (!eventId) {
+    throw new Error('Event ID is required');
+  }
   
   try {
-    const ndk = get(ndkStore);
+    console.info('[INFO] Getting reactions to event', eventId);
+    isLoading.set(true);
+    error.set(null);
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create a filter for reactions
+    const filter = {
+      kinds: [7], // Reaction events
+      '#e': [eventId]
+    };
+    
+    // Create a subscription
+    const sub = ndk.subscribe(filter);
+    
+    // Collect reactions
+    const reactions = [];
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
+      
+      // Add to our local array
+      reactions.push(event);
+    });
+    
+    // Wait for events to be collected
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Stop the subscription
+    sub.stop();
+    
+    return reactions;
+  } catch (err) {
+    console.error('[ERROR] Failed to get reactions:', err);
+    error.set(err.message || 'Failed to get reactions');
+    return [];
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to get reposts of an event
+export async function getReposts(eventId) {
+  if (!eventId) {
+    throw new Error('Event ID is required');
+  }
+  
+  try {
+    console.info('[INFO] Getting reposts of event', eventId);
+    isLoading.set(true);
+    error.set(null);
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create a filter for reposts
+    const filter = {
+      kinds: [6], // Repost events
+      '#e': [eventId]
+    };
+    
+    // Create a subscription
+    const sub = ndk.subscribe(filter);
+    
+    // Collect reposts
+    const reposts = [];
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
+      
+      // Add to our local array
+      reposts.push(event);
+    });
+    
+    // Wait for events to be collected
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Stop the subscription
+    sub.stop();
+    
+    return reposts;
+  } catch (err) {
+    console.error('[ERROR] Failed to get reposts:', err);
+    error.set(err.message || 'Failed to get reposts');
+    return [];
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to get replies to an event
+export async function getReplies(eventId) {
+  if (!eventId) {
+    throw new Error('Event ID is required');
+  }
+  
+  try {
+    console.info('[INFO] Getting replies to event', eventId);
+    isLoading.set(true);
+    error.set(null);
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create a filter for replies
+    const filter = {
+      kinds: [1], // Note events
+      '#e': [eventId]
+    };
+    
+    // Create a subscription
+    const sub = ndk.subscribe(filter);
+    
+    // Collect replies
+    const replies = [];
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
+      
+      // Add to our local array
+      replies.push(event);
+    });
+    
+    // Wait for events to be collected
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Stop the subscription
+    sub.stop();
+    
+    return replies;
+  } catch (err) {
+    console.error('[ERROR] Failed to get replies:', err);
+    error.set(err.message || 'Failed to get replies');
+    return [];
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to create a reaction to an event
+export async function createReaction(eventId, content = '+') {
+  if (!eventId) {
+    throw new Error('Event ID is required');
+  }
+  
+  try {
+    isLoading.set(true);
+    error.set(null);
+    
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create the reaction event
+    const event = {
+      kind: 7,
+      created_at: Math.floor(Date.now() / 1000),
+      content,
+      tags: [
+        ['e', eventId]
+      ]
+    };
+    
+    // Publish the event
+    await ndk.publish(event);
+    
+    // Store the event
+    await db.storeEvent(event);
+    
+    return event;
+  } catch (err) {
+    console.error('[ERROR] Failed to create reaction:', err);
+    error.set(err.message || 'Failed to create reaction');
+    return null;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to repost an event
+export async function repostNote(eventId, eventPubkey) {
+  if (!eventId || !eventPubkey) {
+    throw new Error('Event ID and pubkey are required');
+  }
+  
+  try {
+    isLoading.set(true);
+    error.set(null);
+    
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    const ndk = getNDK();
+    
+    if (!ndk) {
+      throw new Error('NDK not initialized');
+    }
+    
+    // Create the repost event
+    const event = {
+      kind: 6,
+      created_at: Math.floor(Date.now() / 1000),
+      content: '',
+      tags: [
+        ['e', eventId],
+        ['p', eventPubkey]
+      ]
+    };
+    
+    // Publish the event
+    await ndk.publish(event);
+    
+    // Store the event
+    await db.storeEvent(event);
+    
+    return event;
+  } catch (err) {
+    console.error('[ERROR] Failed to repost note:', err);
+    error.set(err.message || 'Failed to repost note');
+    return null;
+  } finally {
+    isLoading.set(false);
+  }
+}
+
+// Function to reply to an event
+export async function replyToNote(eventId, eventPubkey, rootId, content, additionalTags = []) {
+  if (!eventId || !eventPubkey || !content) {
+    throw new Error('Event ID, pubkey, and content are required');
+  }
+  
+  try {
+    isLoading.set(true);
+    error.set(null);
+    
+    // Get current user
+    let currentUser;
+    user.subscribe(value => {
+      currentUser = value;
+    })();
+    
+    if (!currentUser) {
+      throw new Error('User not logged in');
+    }
+    
+    const ndk = getNDK();
+    
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
@@ -271,7 +509,7 @@ export const replyToNote = async (eventId, eventPubkey, rootId, content, additio
       ['p', eventPubkey]
     ];
     
-    // Add root tag if this is part of a thread
+    // Add root tag if we have a root ID
     if (rootId && rootId !== eventId) {
       tags.push(['e', rootId, '', 'root']);
     }
@@ -281,210 +519,74 @@ export const replyToNote = async (eventId, eventPubkey, rootId, content, additio
       tags.push(...additionalTags);
     }
     
-    // Create the event
+    // Create the reply event
     const event = {
       kind: 1,
+      created_at: Math.floor(Date.now() / 1000),
       content,
       tags
     };
     
     // Publish the event
-    const publishedEvent = await ndk.publish(event);
+    await ndk.publish(event);
     
-    // Cache the event
-    await db.storeEvent(publishedEvent);
+    // Store the event
+    await db.storeEvent(event);
     
-    isLoading.set(false);
-    return publishedEvent;
+    // Update the events store
+    events.update(list => {
+      // Add to the beginning (newest first)
+      list.unshift(event);
+      return list;
+    });
+    
+    return event;
   } catch (err) {
-    console.error('Failed to reply to note:', err);
+    console.error('[ERROR] Failed to reply to note:', err);
     error.set(err.message || 'Failed to reply to note');
-    isLoading.set(false);
     return null;
-  }
-};
-
-/**
- * Create a reaction to an existing note
- * @param {string} eventId - ID of event to react to
- * @param {string} content - Reaction content (usually "+" for like)
- * @returns {Promise<Object>} - The published Nostr event
- */
-export const createReaction = async (eventId, content = '+') => {
-  console.info(`[INFO] Creating reaction to: ${eventId.substring(0, 10)}...`);
-  isLoading.set(true);
-  error.set(null);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Get the original event to get the pubkey
-    const originalEvent = await ndk.fetchEvent({ ids: [eventId] });
-    if (!originalEvent) {
-      throw new Error('Original event not found');
-    }
-    
-    // Create tags for the reaction
-    const tags = [
-      ['e', eventId],
-      ['p', originalEvent.pubkey]
-    ];
-    
-    // Create the event
-    const event = {
-      kind: 7,
-      content,
-      tags
-    };
-    
-    // Publish the event
-    const publishedEvent = await ndk.publish(event);
-    
-    // Cache the event
-    await db.storeEvent(publishedEvent);
-    
+  } finally {
     isLoading.set(false);
-    return publishedEvent;
-  } catch (err) {
-    console.error('Failed to create reaction:', err);
-    error.set(err.message || 'Failed to create reaction');
-    isLoading.set(false);
-    return null;
   }
-};
+}
 
-/**
- * Repost an existing note
- * @param {string} eventId - ID of event to repost
- * @param {string} eventPubkey - Pubkey of event author
- * @returns {Promise<Object>} - The published Nostr event
- */
-export const repostNote = async (eventId, eventPubkey) => {
-  console.info(`[INFO] Reposting note: ${eventId.substring(0, 10)}...`);
-  isLoading.set(true);
-  error.set(null);
-  
+// Function to subscribe to notes
+export function subscribeToNotes(onEvent, onEose, filter = {}) {
   try {
-    const ndk = get(ndkStore);
+    const ndk = getNDK();
+    
     if (!ndk) {
       throw new Error('NDK not initialized');
     }
     
-    // Create tags for the repost
-    const tags = [
-      ['e', eventId],
-      ['p', eventPubkey]
-    ];
-    
-    // Create the event
-    const event = {
-      kind: 6,
-      content: '',
-      tags
-    };
-    
-    // Publish the event
-    const publishedEvent = await ndk.publish(event);
-    
-    // Cache the event
-    await db.storeEvent(publishedEvent);
-    
-    isLoading.set(false);
-    return publishedEvent;
-  } catch (err) {
-    console.error('Failed to repost note:', err);
-    error.set(err.message || 'Failed to repost note');
-    isLoading.set(false);
-    return null;
-  }
-};
-
-/**
- * Get reactions to a note
- * @param {string} eventId - ID of the note
- * @returns {Promise<Array>} - Array of reaction events
- */
-export const getReactions = async (eventId) => {
-  console.info(`[INFO] Getting reactions to event ${eventId.substring(0, 10)}...`);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create filter for reactions (kind 7) to this event
-    const filter = {
-      kinds: [7],
-      '#e': [eventId]
-    };
-    
-    // Fetch reaction events
-    const events = await ndk.fetchEvents(filter);
-    return Array.from(events);
-  } catch (err) {
-    console.error(`Failed to get reactions for ${eventId}:`, err);
-    return [];
-  }
-};
-
-/**
- * Get reposts of a note
- * @param {string} eventId - ID of the note
- * @returns {Promise<Array>} - Array of repost events
- */
-export const getReposts = async (eventId) => {
-  console.info(`[INFO] Getting reposts of event ${eventId.substring(0, 10)}...`);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create filter for reposts (kind 6) of this event
-    const filter = {
-      kinds: [6],
-      '#e': [eventId]
-    };
-    
-    // Fetch repost events
-    const events = await ndk.fetchEvents(filter);
-    return Array.from(events);
-  } catch (err) {
-    console.error(`Failed to get reposts for ${eventId}:`, err);
-    return [];
-  }
-};
-
-/**
- * Get replies to a note
- * @param {string} eventId - ID of the note
- * @returns {Promise<Array>} - Array of reply events
- */
-export const getReplies = async (eventId) => {
-  console.info(`[INFO] Getting replies to event ${eventId.substring(0, 10)}...`);
-  
-  try {
-    const ndk = get(ndkStore);
-    if (!ndk) {
-      throw new Error('NDK not initialized');
-    }
-    
-    // Create filter for replies (kind 1) to this event
-    const filter = {
+    // Create a filter for notes
+    const noteFilter = {
       kinds: [1],
-      '#e': [eventId]
+      ...filter
     };
     
-    // Fetch reply events
-    const events = await ndk.fetchEvents(filter);
-    return Array.from(events);
+    // Create a subscription
+    const sub = ndk.subscribe(noteFilter);
+    
+    // Process events as they arrive
+    sub.on('event', event => {
+      // Store the event
+      db.storeEvent(event);
+      
+      // Call the callback
+      onEvent(event);
+    });
+    
+    // Handle end of stored events
+    if (onEose) {
+      sub.on('eose', onEose);
+    }
+    
+    // Return a function to stop the subscription
+    return () => sub.stop();
   } catch (err) {
-    console.error(`Failed to get replies for ${eventId}:`, err);
-    return [];
+    console.error('[ERROR] Failed to subscribe to notes:', err);
+    error.set(err.message || 'Failed to subscribe to notes');
+    return () => {};
   }
-};
+}
