@@ -1,200 +1,252 @@
-import { writable, derived } from 'svelte/store';
-import { useNDK } from '@nostr-dev-kit/ndk-svelte';
+import { writable } from 'svelte/store';
+import { generatePrivateKey, getPublicKey, finalizeEvent, getEventHash } from 'nostr-tools';
 import { db } from '../db/db';
+import { toast } from './toast';
 
-// Initial authentication state
-const initialState = {
-  isLoading: true,
-  isAuthenticated: false,
-  user: null,
-  error: null
-};
+// Define user type
+/**
+ * @typedef {Object} NostrUser
+ * @property {string} privateKey - The user's private key
+ * @property {string} pubkey - The user's public key
+ * @property {Object|null} profile - The user's profile data
+ */
 
-// Create the auth store
-function createAuthStore() {
-  const { subscribe, set, update } = writable(initialState);
-  const { ndk } = useNDK();
+// Create the auth store with initial state
+const createAuthStore = () => {
+  // Initial state
+  const initialState = {
+    isAuthenticated: false,
+    isLoading: true,
+    user: null,
+    error: null
+  };
   
-  // Load user from stored session
-  async function loadUserFromSession() {
+  const { subscribe, set, update } = writable(initialState);
+  
+  // Initialize auth state
+  const initialize = async () => {
     update(state => ({ ...state, isLoading: true }));
     
     try {
-      // Try to load from IndexedDB first
-      const session = await db.getSession();
+      // Try to load user from database
+      const user = await db.getCurrentUser();
       
-      if (session && session.privateKey) {
-        return login(session.privateKey);
+      if (user) {
+        set({
+          isAuthenticated: true,
+          isLoading: false,
+          user,
+          error: null
+        });
       } else {
-        update(state => ({
-          ...state,
-          isLoading: false
-        }));
+        set({
+          isAuthenticated: false,
+          isLoading: false,
+          user: null,
+          error: null
+        });
       }
     } catch (error) {
-      console.error('Error loading user from session:', error);
-      update(state => ({
-        ...state,
+      console.error("Error initializing auth:", error);
+      set({
+        isAuthenticated: false,
         isLoading: false,
-        error: 'Failed to load session'
-      }));
+        user: null,
+        error: error.message
+      });
     }
-  }
+  };
   
   // Login with private key
-  async function login(privateKey) {
-    update(state => ({ ...state, isLoading: true, error: null }));
+  const login = async (nsecOrPrivKey) => {
+    update(state => ({ ...state, isLoading: true }));
     
     try {
-      // Create a signer with the private key
-      await ndk.connect();
-      const signer = ndk.signer.getOrCreate({ privateKey });
+      let privateKey = nsecOrPrivKey;
       
-      // Get the user
-      const user = await signer.user();
-      
-      // Fetch and store profile data
-      try {
-        await user.fetchProfile();
-      } catch (e) {
-        console.warn('Could not fetch profile:', e);
+      // If it starts with nsec, convert it to hex
+      if (nsecOrPrivKey.startsWith('nsec')) {
+        try {
+          // Decode nsec to get the raw private key
+          const decoded = window.nostrTools.nip19.decode(nsecOrPrivKey);
+          privateKey = decoded.data;
+        } catch (e) {
+          throw new Error('Invalid nsec format');
+        }
       }
       
-      // Format user data
-      const userData = {
-        pubkey: user.pubkey,
-        npub: user.npub,
+      // Generate public key from private key
+      const pubkey = getPublicKey(privateKey);
+      
+      // Create user object
+      const user = {
         privateKey,
-        profile: user.profile || {}
+        pubkey,
+        profile: null
       };
       
-      // Store in local DB
-      await db.storeSession(userData);
+      // Store in database
+      await db.storeCurrentUser(user);
       
-      // Update the store
-      update(state => ({
-        ...state,
+      // Update state
+      set({
         isAuthenticated: true,
-        user: userData,
-        isLoading: false
-      }));
+        isLoading: false,
+        user,
+        error: null
+      });
       
-      return userData;
+      toast.success('Logged in successfully');
+      return true;
     } catch (error) {
-      console.error('Login error:', error);
-      update(state => ({
-        ...state,
+      console.error("Login error:", error);
+      set({
         isAuthenticated: false,
+        isLoading: false,
         user: null,
-        error: 'Login failed',
-        isLoading: false
-      }));
-      throw error;
+        error: error.message
+      });
+      
+      toast.error(`Login failed: ${error.message}`);
+      return false;
     }
-  }
+  };
   
-  // Generate a new key pair
-  async function generateNewKeys() {
-    update(state => ({ ...state, isLoading: true, error: null }));
+  // Generate new keys
+  const generateNewKeys = async () => {
+    update(state => ({ ...state, isLoading: true }));
     
     try {
-      // Generate new keys using NDK
-      await ndk.connect();
-      const privateKey = window.crypto.getRandomValues(new Uint8Array(32))
-        .reduce((str, byte) => str + byte.toString(16).padStart(2, '0'), '');
+      // Generate new private key
+      const privateKey = generatePrivateKey();
       
-      return login(privateKey);
+      // Get public key
+      const pubkey = getPublicKey(privateKey);
+      
+      // Create user object
+      const user = {
+        privateKey,
+        pubkey,
+        profile: null
+      };
+      
+      // Store in database
+      await db.storeCurrentUser(user);
+      
+      // Update state
+      set({
+        isAuthenticated: true,
+        isLoading: false,
+        user,
+        error: null
+      });
+      
+      toast.success('New keys generated successfully');
+      return user;
     } catch (error) {
-      console.error('Error generating keys:', error);
-      update(state => ({
-        ...state,
-        error: 'Failed to generate keys',
-        isLoading: false
-      }));
+      console.error("Error generating keys:", error);
+      set({
+        isAuthenticated: false,
+        isLoading: false,
+        user: null,
+        error: error.message
+      });
+      
+      toast.error(`Failed to generate keys: ${error.message}`);
       throw error;
     }
-  }
+  };
+  
+  // Update user profile
+  const updateUserProfile = async (profile) => {
+    update(state => {
+      if (!state.user) return state;
+      
+      const updatedUser = {
+        ...state.user,
+        profile
+      };
+      
+      // Store updated user
+      db.storeCurrentUser(updatedUser).catch(err => 
+        console.error("Error storing updated user:", err)
+      );
+      
+      return {
+        ...state,
+        user: updatedUser
+      };
+    });
+  };
   
   // Logout
-  async function logout() {
+  const logout = async () => {
     try {
-      // Clear the session
-      await db.clearSession();
+      // Clear current user from db
+      await db.session.clear();
       
-      // Reset the store
+      // Update state
       set({
-        isLoading: false,
         isAuthenticated: false,
+        isLoading: false,
         user: null,
         error: null
       });
       
-      return true;
+      toast.info('Logged out successfully');
     } catch (error) {
-      console.error('Logout error:', error);
-      update(state => ({
-        ...state,
-        error: 'Logout failed'
-      }));
-      return false;
+      console.error("Logout error:", error);
+      toast.error(`Logout failed: ${error.message}`);
     }
-  }
+  };
   
-  // Check if the session is valid
-  async function checkSession() {
-    update(state => ({ ...state, isLoading: true }));
-    
-    try {
-      const session = await db.getSession();
-      
-      if (session && session.privateKey) {
-        // Validate the private key
-        await ndk.connect();
-        const signer = ndk.signer.getOrCreate({ privateKey: session.privateKey });
-        const user = await signer.user();
-        
-        if (user && user.pubkey) {
-          update(state => ({
-            ...state,
-            isAuthenticated: true,
-            user: session,
-            isLoading: false
-          }));
-          return true;
-        }
+  // Sign an event
+  const signEvent = (event) => {
+    return update(state => {
+      if (!state.user || !state.user.privateKey) {
+        throw new Error('Not authenticated');
       }
       
-      // No valid session
-      update(state => ({
-        ...state,
-        isAuthenticated: false,
-        user: null,
-        isLoading: false
-      }));
-      return false;
-    } catch (error) {
-      console.error('Error checking session:', error);
-      update(state => ({
-        ...state,
-        isAuthenticated: false,
-        user: null,
-        error: 'Session validation failed',
-        isLoading: false
-      }));
-      return false;
-    }
-  }
+      try {
+        // Add created_at if not provided
+        if (!event.created_at) {
+          event.created_at = Math.floor(Date.now() / 1000);
+        }
+        
+        // Add pubkey if not provided
+        if (!event.pubkey) {
+          event.pubkey = state.user.pubkey;
+        }
+        
+        // Add id if not provided
+        if (!event.id) {
+          event.id = getEventHash(event);
+        }
+        
+        // Sign the event
+        const signedEvent = finalizeEvent(event, state.user.privateKey);
+        
+        return state;
+      } catch (error) {
+        console.error("Error signing event:", error);
+        throw error;
+      }
+    });
+  };
   
-  // Return the store with additional methods
+  // Initialize on creation
+  initialize().catch(err => console.error("Auth initialization error:", err));
+  
   return {
     subscribe,
     login,
     logout,
     generateNewKeys,
-    loadUserFromSession,
-    checkSession
+    updateUserProfile,
+    signEvent,
+    initialize
   };
-}
+};
 
-// Create the auth store instance
+// Create and export the store
 export const auth = createAuthStore();

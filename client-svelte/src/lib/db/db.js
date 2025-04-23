@@ -1,260 +1,294 @@
 import Dexie from 'dexie';
 
-/**
- * NodusDB: Local database implementation using Dexie (IndexedDB wrapper)
- * This provides local storage for a true local-first architecture
- */
-class NodusDB extends Dexie {
+// Define our Dexie database class
+class NodusDatabase extends Dexie {
   constructor() {
-    super('NodusDB');
+    super('nodus-db');
     
-    // Define database schema with appropriate indexes
+    // Define database schema
     this.version(1).stores({
-      events: 'id, pubkey, kind, created_at, *tags',
-      profiles: 'pubkey, updated_at',
-      relays: 'url, added_at',
+      events: 'id, pubkey, kind, created_at, [pubkey+kind]',
+      profiles: 'pubkey',
+      session: 'id',
       settings: 'id',
-      session: 'id'
+      relays: 'url'
     });
     
-    // Add specific typing to tables
+    // Define table types
     this.events = this.table('events');
     this.profiles = this.table('profiles');
-    this.relays = this.table('relays');
-    this.settings = this.table('settings');
     this.session = this.table('session');
+    this.settings = this.table('settings');
+    this.relays = this.table('relays');
   }
   
-  /**
-   * Store a Nostr event in the local database
-   */
+  /* Event methods */
+  
+  // Store a Nostr event
   async storeEvent(event) {
+    if (!event || !event.id) return null;
+    
     try {
-      // Ensure the event has all required fields
-      if (!event || !event.id || !event.pubkey) {
-        console.error('Invalid event object:', event);
-        return null;
-      }
-      
-      // Add standard fields if missing
-      const processedEvent = {
-        ...event,
-        created_at: event.created_at || Math.floor(Date.now() / 1000),
-        tags: event.tags || [],
-        content: event.content || '',
-        sig: event.sig || ''
-      };
-      
-      // Store or update the event
-      return await this.events.put(processedEvent);
+      await this.events.put(event);
+      return event.id;
     } catch (error) {
       console.error('Error storing event:', error);
-      return null;
+      throw error;
     }
   }
   
-  /**
-   * Get events by kind with optional limit
-   */
-  async getEventsByKind(kind, limit = 50) {
-    return await this.events
-      .where('kind')
-      .equals(kind)
-      .reverse() // Newest first
-      .limit(limit)
-      .toArray();
-  }
-  
-  /**
-   * Get events by pubkey with optional limit
-   */
-  async getEventsByPubkey(pubkey, limit = 50) {
-    return await this.events
-      .where('pubkey')
-      .equals(pubkey)
-      .reverse() // Newest first
-      .limit(limit)
-      .toArray();
-  }
-  
-  /**
-   * Store user profile data
-   */
-  async storeProfile(pubkey, profile) {
+  // Store multiple events
+  async storeEvents(events) {
+    if (!events || !events.length) return [];
+    
     try {
-      if (!pubkey || !profile) return false;
-      
-      const profileData = {
+      await this.events.bulkPut(events);
+      return events.map(e => e.id);
+    } catch (error) {
+      console.error('Error storing events:', error);
+      throw error;
+    }
+  }
+  
+  // Get event by ID
+  async getEvent(id) {
+    if (!id) return null;
+    
+    try {
+      return await this.events.get(id);
+    } catch (error) {
+      console.error(`Error getting event ${id}:`, error);
+      throw error;
+    }
+  }
+  
+  // Get events by kind
+  async getEventsByKind(kind, limit = 50) {
+    try {
+      return await this.events
+        .where('kind')
+        .equals(kind)
+        .reverse() // Most recent first
+        .limit(limit)
+        .toArray();
+    } catch (error) {
+      console.error(`Error getting events of kind ${kind}:`, error);
+      throw error;
+    }
+  }
+  
+  // Get events by pubkey
+  async getEventsByPubkey(pubkey, limit = 50) {
+    if (!pubkey) return [];
+    
+    try {
+      return await this.events
+        .where('pubkey')
+        .equals(pubkey)
+        .reverse() // Most recent first
+        .limit(limit)
+        .toArray();
+    } catch (error) {
+      console.error(`Error getting events for pubkey ${pubkey}:`, error);
+      throw error;
+    }
+  }
+  
+  // Get events by pubkey and kind
+  async getEventsByPubkeyAndKind(pubkey, kind, limit = 50) {
+    if (!pubkey) return [];
+    
+    try {
+      return await this.events
+        .where('[pubkey+kind]')
+        .equals([pubkey, kind])
+        .reverse() // Most recent first
+        .limit(limit)
+        .toArray();
+    } catch (error) {
+      console.error(`Error getting events for pubkey ${pubkey} and kind ${kind}:`, error);
+      throw error;
+    }
+  }
+  
+  /* Profile methods */
+  
+  // Store a profile
+  async storeProfile(pubkey, profile) {
+    if (!pubkey || !profile) return false;
+    
+    try {
+      await this.profiles.put({
         pubkey,
         ...profile,
         updated_at: Date.now()
-      };
-      
-      await this.profiles.put(profileData);
+      });
       return true;
     } catch (error) {
-      console.error('Error storing profile:', error);
-      return false;
+      console.error(`Error storing profile for ${pubkey}:`, error);
+      throw error;
     }
   }
   
-  /**
-   * Get a stored profile by pubkey
-   */
+  // Get a profile
   async getProfile(pubkey) {
+    if (!pubkey) return null;
+    
     try {
       return await this.profiles.get(pubkey);
     } catch (error) {
-      console.error('Error getting profile:', error);
-      return null;
+      console.error(`Error getting profile for ${pubkey}:`, error);
+      throw error;
     }
   }
   
-  /**
-   * Store user's preferred relays
-   */
-  async storeRelay(url) {
+  /* Session methods */
+  
+  // Store the current user
+  async storeCurrentUser(user) {
+    if (!user || !user.pubkey) return false;
+    
     try {
-      if (!url) return false;
-      
-      const relay = {
-        url,
-        added_at: Date.now()
-      };
-      
-      await this.relays.put(relay);
+      await this.session.put({
+        id: 1, // Only one user session at a time
+        ...user,
+        updated_at: Date.now()
+      });
       return true;
     } catch (error) {
-      console.error('Error storing relay:', error);
-      return false;
+      console.error('Error storing current user:', error);
+      throw error;
     }
   }
   
-  /**
-   * Get all stored relays
-   */
+  // Get the current user
+  async getCurrentUser() {
+    try {
+      return await this.session.get(1);
+    } catch (error) {
+      console.error('Error getting current user:', error);
+      throw error;
+    }
+  }
+  
+  /* Settings methods */
+  
+  // Set theme
+  async setTheme(theme) {
+    try {
+      const settings = await this.settings.get(1) || { id: 1 };
+      settings.theme = theme;
+      settings.updated_at = Date.now();
+      
+      await this.settings.put(settings);
+      return true;
+    } catch (error) {
+      console.error('Error setting theme:', error);
+      throw error;
+    }
+  }
+  
+  // Get theme
+  async getTheme() {
+    try {
+      const settings = await this.settings.get(1);
+      return settings?.theme || 'system';
+    } catch (error) {
+      console.error('Error getting theme:', error);
+      throw error;
+    }
+  }
+  
+  // Update last sync time
+  async updateLastSync() {
+    try {
+      const settings = await this.settings.get(1) || { id: 1 };
+      settings.lastSync = new Date();
+      settings.updated_at = Date.now();
+      
+      await this.settings.put(settings);
+      return true;
+    } catch (error) {
+      console.error('Error updating last sync:', error);
+      throw error;
+    }
+  }
+  
+  // Get last sync time
+  async getLastSync() {
+    try {
+      const settings = await this.settings.get(1);
+      return settings?.lastSync || null;
+    } catch (error) {
+      console.error('Error getting last sync:', error);
+      throw error;
+    }
+  }
+  
+  /* Relay methods */
+  
+  // Store a relay
+  async storeRelay(url, read = true, write = true) {
+    if (!url) return false;
+    
+    try {
+      await this.relays.put({
+        url,
+        read,
+        write,
+        updated_at: Date.now()
+      });
+      return true;
+    } catch (error) {
+      console.error(`Error storing relay ${url}:`, error);
+      throw error;
+    }
+  }
+  
+  // Get all relays
   async getRelays() {
     try {
       return await this.relays.toArray();
     } catch (error) {
       console.error('Error getting relays:', error);
-      return [];
+      throw error;
     }
   }
   
-  /**
-   * Remove a relay by URL
-   */
+  // Remove a relay
   async removeRelay(url) {
+    if (!url) return false;
+    
     try {
       await this.relays.delete(url);
       return true;
     } catch (error) {
-      console.error('Error removing relay:', error);
-      return false;
+      console.error(`Error removing relay ${url}:`, error);
+      throw error;
     }
   }
   
-  /**
-   * Store user settings
-   */
-  async storeSettings(settings) {
+  // Update relay status
+  async updateRelayStatus(url, connected) {
+    if (!url) return false;
+    
     try {
-      const userSettings = {
-        id: 1, // We only have one settings object
-        ...settings,
-        updated_at: Date.now()
-      };
+      const relay = await this.relays.get(url);
       
-      await this.settings.put(userSettings);
-      return true;
-    } catch (error) {
-      console.error('Error storing settings:', error);
-      return false;
-    }
-  }
-  
-  /**
-   * Get user settings
-   */
-  async getSettings() {
-    try {
-      return await this.settings.get(1) || {};
-    } catch (error) {
-      console.error('Error getting settings:', error);
-      return {};
-    }
-  }
-  
-  /**
-   * Store session data
-   */
-  async storeSession(data) {
-    try {
-      const session = {
-        id: 1, // We only have one session
-        ...data,
-        updated_at: Date.now()
-      };
+      if (relay) {
+        relay.connected = connected;
+        relay.updated_at = Date.now();
+        
+        await this.relays.put(relay);
+      }
       
-      await this.session.put(session);
       return true;
     } catch (error) {
-      console.error('Error storing session:', error);
-      return false;
-    }
-  }
-  
-  /**
-   * Get session data
-   */
-  async getSession() {
-    try {
-      return await this.session.get(1) || null;
-    } catch (error) {
-      console.error('Error getting session:', error);
-      return null;
-    }
-  }
-  
-  /**
-   * Clear session data (logout)
-   */
-  async clearSession() {
-    try {
-      await this.session.clear();
-      return true;
-    } catch (error) {
-      console.error('Error clearing session:', error);
-      return false;
+      console.error(`Error updating relay status for ${url}:`, error);
+      throw error;
     }
   }
 }
 
-// Create database instance
-const db = new NodusDB();
-
-// Initialize the database
-export async function initializeDb() {
-  try {
-    console.info('Initializing NodusDB...');
-    
-    // Pre-populate settings if needed
-    const settings = await db.getSettings();
-    if (!settings.id) {
-      await db.storeSettings({
-        theme: 'light',
-        notifications: true,
-        lastSynced: null
-      });
-    }
-    
-    console.info('NodusDB initialized successfully');
-    return true;
-  } catch (error) {
-    console.error('Error initializing NodusDB:', error);
-    return false;
-  }
-}
-
-export { db };
+// Create and export database instance
+export const db = new NodusDatabase();
