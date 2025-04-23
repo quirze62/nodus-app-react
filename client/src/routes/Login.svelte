@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { user } from '../lib/stores/auth.js';
-  import { navigate } from 'svelte-routing';
+  import page from 'page';
   
   let nsecInput = '';
   let isLoading = false;
@@ -19,7 +19,7 @@
     try {
       const success = await user.loginWithPrivateKey(nsecInput);
       if (success) {
-        navigate('/');
+        page('/');
       } else {
         errorMessage = 'Login failed. Please check your private key.';
       }
@@ -38,7 +38,7 @@
     try {
       const success = await user.loginWithExtension();
       if (success) {
-        navigate('/');
+        page('/');
       } else {
         errorMessage = 'Extension login failed. Make sure your Nostr extension is installed and configured.';
       }
@@ -56,7 +56,7 @@
     
     try {
       await user.generateNewKeys();
-      navigate('/');
+      page('/');
     } catch (error) {
       console.error('Key generation error:', error);
       errorMessage = 'Failed to generate new keys.';
