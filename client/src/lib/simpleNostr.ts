@@ -5,10 +5,10 @@ import { db } from './db';
 
 // Default relays
 const DEFAULT_RELAYS = [
+  'wss://relay.mynodus.com', // Our primary Nodus relay
   'wss://relay.damus.io',
   'wss://relay.nostr.band',
   'wss://nos.lol',
-  'wss://relay.current.fyi',
   'wss://nostr.wine'
 ];
 

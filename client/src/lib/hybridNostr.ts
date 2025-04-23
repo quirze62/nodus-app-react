@@ -103,7 +103,11 @@ export const generateNewUser = async (): Promise<NostrUser> => {
     
     // Make sure our custom relays are also connected
     try {
-      await simpleNostr.loginWithPrivateKey(ndkUser.privateKey);
+      if (ndkUser.privateKey) {
+        await simpleNostr.loginWithPrivateKey(ndkUser.privateKey);
+      } else {
+        logger.warn('No private key available for custom relay connection');
+      }
     } catch (e) {
       logger.warn('Failed to connect custom relays with new user:', e);
     }

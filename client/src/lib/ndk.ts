@@ -12,9 +12,9 @@ let ndkInstance: NDK | null = null;
  */
 export const getNDK = async (): Promise<NDK> => {
   if (!ndkInstance) {
-    // Initialize NDK with default relays since the app needs to work
+    // Initialize NDK with our Nodus relay and fallback to public relays
     ndkInstance = new NDK({
-      explicitRelayUrls: ['wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol', 'wss://nostr.wine'],
+      explicitRelayUrls: ['wss://relay.mynodus.com', 'wss://relay.damus.io', 'wss://relay.nostr.band', 'wss://nos.lol', 'wss://nostr.wine'],
       enableOutboxModel: true, // for offline functionality
     });
     
