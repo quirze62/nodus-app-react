@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NDKEvent, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
-import { useNDK } from '../contexts/NDKProvider';
+import { useNdk } from '../contexts/NdkContext';
 import logger from '../lib/logger';
 import { NostrEvent } from '../lib/nostr';
 import { db } from '../lib/db';
@@ -10,7 +10,7 @@ const TEXT_NOTE_KIND = 1;
 
 // Hook for fetching and working with posts
 export function useNodusPosts(limit: number = 50) {
-  const ndk = useNDK();
+  const { ndk } = useNdk();
   const [posts, setPosts] = useState<NostrEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
