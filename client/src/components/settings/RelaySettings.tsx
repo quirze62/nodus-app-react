@@ -12,7 +12,6 @@ import { DEFAULT_RELAYS as SIMPLE_DEFAULT_RELAYS, getRelayManager as getSimpleRe
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionStatus } from '../common/ConnectionStatus';
 import { WebSocketTester } from '../common/WebSocketTester';
-import { DirectNostrRelayTest } from '../common/DirectNostrRelayTest';
 
 export default function RelaySettings() {
   const [relays, setRelays] = useState<ManagedRelay[]>([]);
@@ -273,16 +272,9 @@ export default function RelaySettings() {
             This utility tests whether WebSockets work in this environment. If this test fails but HTTP works, it indicates a WebSocket connectivity issue in the hosting environment.
           </p>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <h4 className="text-sm font-medium mb-2">1. Generic WebSocket Test</h4>
-              <WebSocketTester />
-            </div>
-            
-            <div>
-              <h4 className="text-sm font-medium mb-2">2. Direct Nostr Relay Test</h4>
-              <DirectNostrRelayTest />
-            </div>
+          <div>
+            <h4 className="text-sm font-medium mb-2">WebSocket Connection Test</h4>
+            <WebSocketTester />
           </div>
         </div>
         

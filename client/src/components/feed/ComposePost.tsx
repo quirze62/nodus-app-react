@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { useNostr } from '@/hooks/useNostr';
+import { useNdk } from '@/contexts/NdkContext';
 import { useToast } from '@/hooks/use-toast';
 import { extractHashtags } from '@/lib/utils';
 
 export default function ComposePost() {
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { postNote } = useNostr();
+  const { publishNote } = useNdk();
   const { toast } = useToast();
 
   const handleSubmit = async () => {
@@ -28,7 +28,7 @@ export default function ComposePost() {
       const hashtags = extractHashtags(content);
       const tags = hashtags.map(tag => ['t', tag]);
       
-      const note = await postNote(content, tags);
+      const note = await publishNote(content, tags);
       
       if (note) {
         toast({
