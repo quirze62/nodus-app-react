@@ -16,6 +16,7 @@ export function useNodusPosts(limit: number = 50) {
   const [error, setError] = useState<string | null>(null);
   
   // Filter for text notes (posts)
+  // We'll filter for NIP-05 verified users
   const filter: NDKFilter = {
     kinds: [TEXT_NOTE_KIND],
     limit
@@ -50,18 +51,34 @@ export function useNodusPosts(limit: number = 50) {
     const events: NostrEvent[] = [];
     
     // Handle events as they come in
-    subscription.on('event', (ndkEvent: NDKEvent) => {
+    subscription.on('event', async (ndkEvent: NDKEvent) => {
       const event = convertNDKEventToNostrEvent(ndkEvent);
-      events.push(event);
       
-      // Store in database
-      db.storeEvent(event).catch((err: Error) => {
-        logger.error('Error storing event in database', err);
-      });
-      
-      // Sort and update state
-      const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
-      setPosts(sortedEvents);
+      // Check for verified users (has NIP-05)
+      try {
+        // Get profile for author if we don't already have it
+        const ndkUser = ndk.getUser({ pubkey: event.pubkey });
+        await ndkUser.fetchProfile();
+        
+        // Only allow posts from users with NIP-05 verification
+        if (ndkUser.profile?.nip05) {
+          logger.info(`Accepted post from verified user: ${ndkUser.profile.nip05}`);
+          events.push(event);
+          
+          // Store in database
+          db.storeEvent(event).catch((err: Error) => {
+            logger.error('Error storing event in database', err);
+          });
+          
+          // Sort and update state
+          const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
+          setPosts(sortedEvents);
+        } else {
+          logger.info(`Skipped post from unverified user: ${event.pubkey}`);
+        }
+      } catch (err) {
+        logger.error('Error fetching user profile for verification', err);
+      }
     });
     
     // Handle end of stored events
