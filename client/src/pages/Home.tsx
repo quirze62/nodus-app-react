@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNostr } from '@/hooks/useNostr';
-import { useHybridNostr } from '@/hooks/useHybridNostr';
+import { useNodusPosts } from '@/hooks/useNodusPosts';
 import { useOffline } from '@/hooks/useOffline';
 import ComposePost from '@/components/feed/ComposePost';
 import OfflineIndicator from '@/components/feed/OfflineIndicator';
@@ -12,37 +11,11 @@ import { NostrEvent } from '@/lib/nostr';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export default function Home() {
-  // Use the hybrid implementation that uses our custom WebSocket implementation
-  // but still benefits from NDK's data management capabilities
-  const { loadNotes, isLoading, error } = useHybridNostr();
+  // Use our pure NDK implementation with subscription-based updates
+  const { posts, isLoading, error, createPost } = useNodusPosts(50);
   const { isOffline } = useOffline();
-  const [notes, setNotes] = useState<NostrEvent[]>([]);
   
-  // We'll only show authentic data from Nostr relays
-  
-  useEffect(() => {
-    const fetchNotes = async () => {
-      try {
-        // Load notes from the network
-        const fetchedNotes = await loadNotes();
-        console.log(`Got ${fetchedNotes.length} notes from network`);
-        setNotes(fetchedNotes);
-      } catch (err) {
-        console.error('Error fetching notes:', err);
-        // In case of error, just keep the current notes or display empty
-        // Don't display any fake sample data
-      }
-    };
-    
-    fetchNotes();
-    
-    // Set up a polling interval if online
-    const interval = !isOffline ? setInterval(fetchNotes, 30000) : null;
-    
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [loadNotes, isOffline]);
+  // Display only authentic data from Nostr relays
   
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative">
@@ -52,7 +25,7 @@ export default function Home() {
         
         {isOffline && <OfflineIndicator />}
         
-        {isLoading && notes.length === 0 ? (
+        {isLoading && posts.length === 0 ? (
           // Loading skeleton
           Array(3).fill(0).map((_, i) => (
             <div key={i} className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden p-4">
@@ -72,7 +45,7 @@ export default function Home() {
             <p className="font-medium">Error loading posts</p>
             <p className="text-sm mt-1">Please check your connection and try again.</p>
           </div>
-        ) : notes.length === 0 ? (
+        ) : posts.length === 0 ? (
           // Empty state
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden p-8 text-center">
             <h3 className="font-medium text-lg text-gray-900 dark:text-white">No posts yet</h3>
@@ -82,8 +55,8 @@ export default function Home() {
           </div>
         ) : (
           // Display posts
-          notes.map(note => (
-            <PostCard key={note.id} post={note} />
+          posts.map(post => (
+            <PostCard key={post.id} post={post} />
           ))
         )}
       </div>
