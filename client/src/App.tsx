@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { NdkProvider } from "@/contexts/NdkContext";
+import { NodusProvider } from "@/contexts/NDKProvider";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileNavigation from "@/components/layout/MobileNavigation";
@@ -72,7 +72,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <NdkProvider>
+        <NodusProvider>
           <AuthProvider>
             <TooltipProvider>
               <Toaster />
@@ -80,7 +80,7 @@ function App() {
               <SimpleDebugPanel />
             </TooltipProvider>
           </AuthProvider>
-        </NdkProvider>
+        </NodusProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );
