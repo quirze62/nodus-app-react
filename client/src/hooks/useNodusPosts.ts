@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { useNDK, useSubscription } from '@nostr-dev-kit/ndk-hooks';
-import { NDKEvent, NDKFilter, NDKSubscriptionOptions } from '@nostr-dev-kit/ndk';
+import { useState, useEffect, useCallback } from 'react';
+import { NDKEvent, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
+import { useNDK } from '../contexts/NDKProvider';
 import logger from '../lib/logger';
 import { NostrEvent } from '../lib/nostr';
 import { db } from '../lib/db';
@@ -10,7 +10,7 @@ const TEXT_NOTE_KIND = 1;
 
 // Hook for fetching and working with posts
 export function useNodusPosts(limit: number = 50) {
-  const { ndk } = useNDK();
+  const ndk = useNDK();
   const [posts, setPosts] = useState<NostrEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,38 +26,56 @@ export function useNodusPosts(limit: number = 50) {
     closeOnEose: false
   };
   
-  // Get events with useSubscription hook
-  const { events, eose } = useSubscription({
-    filter,
-    options,
-    enabled: !!ndk
-  });
-  
-  // Convert NDKEvents to NostrEvents and store in state
+  // Set up subscription to posts
   useEffect(() => {
-    if (!events.length) return;
+    if (!ndk) return;
     
-    const convertedEvents = events.map(event => convertNDKEventToNostrEvent(event));
+    setIsLoading(true);
+    logger.info(`Fetching up to ${limit} posts from Nostr network`);
     
-    // Sort by created_at, newest first
-    convertedEvents.sort((a, b) => b.created_at - a.created_at);
+    // Start with posts from database
+    db.getEventsByKind(TEXT_NOTE_KIND, limit)
+      .then((dbEvents: NostrEvent[]) => {
+        if (dbEvents.length > 0) {
+          logger.info(`Loaded ${dbEvents.length} posts from local database`);
+          setPosts(dbEvents.sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at));
+        }
+      })
+      .catch((err: Error) => {
+        logger.error('Error loading posts from database', err);
+      });
     
-    // Store events in local database
-    convertedEvents.forEach(event => {
-      db.storeEvent(event).catch(err => {
+    // Create subscription
+    const subscription = ndk.subscribe(filter, options);
+    const events: NostrEvent[] = [];
+    
+    // Handle events as they come in
+    subscription.on('event', (ndkEvent: NDKEvent) => {
+      const event = convertNDKEventToNostrEvent(ndkEvent);
+      events.push(event);
+      
+      // Store in database
+      db.storeEvent(event).catch((err: Error) => {
         logger.error('Error storing event in database', err);
       });
+      
+      // Sort and update state
+      const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
+      setPosts(sortedEvents);
     });
     
-    setPosts(convertedEvents);
-  }, [events]);
-  
-  // Update loading state when EOSE is received
-  useEffect(() => {
-    if (eose) {
+    // Handle end of stored events
+    subscription.on('eose', () => {
+      logger.info(`Received EOSE with ${events.length} posts`);
       setIsLoading(false);
-    }
-  }, [eose]);
+    });
+    
+    // Clean up subscription on unmount
+    return () => {
+      logger.info('Cleaning up posts subscription');
+      subscription.stop();
+    };
+  }, [ndk, limit]);
   
   // Function to create a new post
   const createPost = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
@@ -83,7 +101,7 @@ export function useNodusPosts(limit: number = 50) {
       setPosts(prevPosts => [newPost, ...prevPosts]);
       
       return newPost;
-    } catch (err) {
+    } catch (err: any) {
       logger.error('Error creating post', err);
       setError('Failed to create post');
       return null;
