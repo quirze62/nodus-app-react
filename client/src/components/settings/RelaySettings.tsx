@@ -6,28 +6,83 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Wifi, WifiOff, AlertTriangle, Badge as BadgeIcon } from "lucide-react";
-import { DEFAULT_RELAYS, getRelayManager, ManagedRelay } from '@/lib/relayManager';
+import { Trash2, Plus, Wifi, WifiOff, AlertTriangle, RefreshCw, Badge as BadgeIcon } from "lucide-react";
 import { useNdk } from '@/contexts/NdkContext';
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionStatus } from '../common/ConnectionStatus';
+import NDK, { NDKRelay, NDKRelayStatus } from '@nostr-dev-kit/ndk';
+
+// Default Nostr relays
+const DEFAULT_RELAYS = [
+  'wss://relay.mynodus.com',
+  'wss://relay.damus.io',
+  'wss://relay.nostr.band',
+  'wss://nos.lol',
+  'wss://nostr.wine'
+];
+
+// Relay interface for the UI
+interface RelayInfo {
+  url: string;
+  status: 'connected' | 'connecting' | 'disconnected' | 'error';
+  read: boolean;
+  write: boolean;
+  latency?: number;
+  relay: NDKRelay;
+}
 
 export default function RelaySettings() {
-  const [relays, setRelays] = useState<ManagedRelay[]>([]);
+  const [relays, setRelays] = useState<RelayInfo[]>([]);
   const [newRelayUrl, setNewRelayUrl] = useState('');
   const [isAdding, setIsAdding] = useState(false);
-  const [autoReconnect, setAutoReconnect] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
   const { ndk } = useNdk();
-  
-  // Use NDK implementation only
-  const relayManager = getRelayManager();
 
   // Load relays on mount
   useEffect(() => {
+    if (!ndk || !ndk.pool) return;
+    
     const loadRelays = () => {
-      const loadedRelays = relayManager.getAllRelays();
-      setRelays(loadedRelays);
+      setIsLoading(true);
+      
+      const relayInfos: RelayInfo[] = [];
+      
+      // Get relays from NDK
+      if (ndk.pool.relays) {
+        // The relays property is of type Map<string, NDKRelay>
+        ndk.pool.relays.forEach((relay, url) => {
+          let status: 'connected' | 'connecting' | 'disconnected' | 'error' = 'disconnected';
+          
+          // Map NDK status to our UI status
+          if (relay.status === NDKRelayStatus.CONNECTED) {
+            status = 'connected';
+          } else if (relay.status === NDKRelayStatus.CONNECTING) {
+            status = 'connecting';
+          } else if (relay.status === NDKRelayStatus.DISCONNECTED) {
+            status = 'disconnected';
+          } else {
+            // Fallback for any other status including errors
+            status = 'error';
+          }
+          
+          // According to the NDK docs, relays have read/write properties
+          const isReadable = relay.settings?.read !== false;
+          const isWritable = relay.settings?.write !== false;
+          
+          relayInfos.push({
+            url,
+            status,
+            read: isReadable,
+            write: isWritable,
+            latency: typeof relay.latency === 'number' ? relay.latency : undefined,
+            relay
+          });
+        });
+      }
+      
+      setRelays(relayInfos);
+      setIsLoading(false);
     };
 
     // Load initial relays
@@ -38,10 +93,19 @@ export default function RelaySettings() {
 
     // Clean up interval on unmount
     return () => clearInterval(intervalId);
-  }, []);
+  }, [ndk]);
 
   // Handle adding a new relay
   const handleAddRelay = async () => {
+    if (!ndk) {
+      toast({
+        title: "Error",
+        description: "NDK not initialized",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     if (!newRelayUrl.trim()) {
       toast({
         title: "Error",
@@ -54,24 +118,18 @@ export default function RelaySettings() {
     setIsAdding(true);
 
     try {
-      const success = await relayManager.addRelay(newRelayUrl);
+      // Create a new relay object with the URL
+      const relay = new NDKRelay(newRelayUrl);
       
-      if (success) {
-        toast({
-          title: "Success",
-          description: `Added relay ${newRelayUrl}`,
-        });
-        setNewRelayUrl('');
-        
-        // Update relay list
-        setRelays(relayManager.getAllRelays());
-      } else {
-        toast({
-          title: "Error",
-          description: `Failed to add relay ${newRelayUrl}`,
-          variant: "destructive"
-        });
-      }
+      // Add the relay to NDK
+      await ndk.pool?.addRelay(relay);
+      
+      toast({
+        title: "Success",
+        description: `Added relay ${newRelayUrl}`,
+      });
+      setNewRelayUrl('');
+      
     } catch (error) {
       console.error("Error adding relay:", error);
       toast({
@@ -86,21 +144,31 @@ export default function RelaySettings() {
 
   // Handle removing a relay
   const handleRemoveRelay = async (url: string) => {
+    if (!ndk || !ndk.pool?.relays) {
+      toast({
+        title: "Error",
+        description: "NDK not initialized",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     try {
-      const success = await relayManager.removeRelay(url);
+      // Get the relay instance from the map
+      const relay = ndk.pool.relays.get(url);
       
-      if (success) {
+      if (relay) {
+        // Remove the relay from NDK
+        await ndk.pool.removeRelay(relay);
+        
         toast({
           title: "Success",
           description: `Removed relay ${url}`,
         });
-        
-        // Update relay list
-        setRelays(relayManager.getAllRelays());
       } else {
         toast({
-          title: "Error",
-          description: `Failed to remove relay ${url}`,
+          title: "Error", 
+          description: `Relay ${url} not found`,
           variant: "destructive"
         });
       }
@@ -116,16 +184,34 @@ export default function RelaySettings() {
 
   // Handle updating relay read/write settings
   const handleUpdateRelay = async (url: string, read: boolean, write: boolean) => {
+    if (!ndk || !ndk.pool?.relays) {
+      toast({
+        title: "Error",
+        description: "NDK not initialized",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     try {
-      const success = await relayManager.updateRelay(url, read, write);
-      
-      if (success) {
-        // Update relay list
-        setRelays(relayManager.getAllRelays());
+      const relay = ndk.pool.relays.get(url);
+      if (relay) {
+        // Update relay settings
+        if (!relay.settings) {
+          relay.settings = {};
+        }
+        
+        relay.settings.read = read;
+        relay.settings.write = write;
+        
+        toast({
+          title: "Success",
+          description: `Updated relay ${url}`,
+        });
       } else {
         toast({
           title: "Error",
-          description: `Failed to update relay ${url}`,
+          description: `Relay ${url} not found`,
           variant: "destructive"
         });
       }
@@ -141,24 +227,38 @@ export default function RelaySettings() {
 
   // Handle restoring default relays
   const handleRestoreDefaults = async () => {
+    if (!ndk || !ndk.pool) {
+      toast({
+        title: "Error",
+        description: "NDK not initialized",
+        variant: "destructive"
+      });
+      return;
+    }
+    
     try {
-      // Remove all existing relays
-      for (const relay of relays) {
-        await relayManager.removeRelay(relay.url);
+      // Clear existing relays
+      if (ndk.pool.relays) {
+        // Get all current relays 
+        const currentRelays: NDKRelay[] = [];
+        ndk.pool.relays.forEach(relay => currentRelays.push(relay));
+        
+        // Remove each relay
+        for (const relay of currentRelays) {
+          await ndk.pool.removeRelay(relay);
+        }
       }
       
       // Add default relays
       for (const url of DEFAULT_RELAYS) {
-        await relayManager.addRelay(url);
+        const relay = new NDKRelay(url);
+        await ndk.pool.addRelay(relay);
       }
       
       toast({
         title: "Success",
         description: "Restored default relays",
       });
-      
-      // Update relay list
-      setRelays(relayManager.getAllRelays());
     } catch (error) {
       console.error("Error restoring default relays:", error);
       toast({
@@ -169,15 +269,32 @@ export default function RelaySettings() {
     }
   };
 
-  // Handle auto reconnect setting
-  const handleAutoReconnectChange = (checked: boolean) => {
-    setAutoReconnect(checked);
-    relayManager.setAutoReconnect(checked);
+  // Manually refresh relay connections
+  const handleRefreshConnections = () => {
+    if (!ndk || !ndk.pool) {
+      toast({
+        title: "Error",
+        description: "NDK not initialized",
+        variant: "destructive"
+      });
+      return;
+    }
     
-    toast({
-      title: "Settings Updated",
-      description: `Auto reconnect ${checked ? 'enabled' : 'disabled'}`,
-    });
+    try {
+      // Connect to all relays
+      ndk.pool.relays?.forEach(relay => {
+        if (relay.status !== NDKRelayStatus.CONNECTED) {
+          relay.connect();
+        }
+      });
+      
+      toast({
+        title: "Refreshing Connections",
+        description: "Attempting to reconnect to all relays",
+      });
+    } catch (error) {
+      console.error("Error refreshing connections:", error);
+    }
   };
 
   // Get status badge for relay
@@ -230,14 +347,14 @@ export default function RelaySettings() {
         </div>
         
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <Switch 
-              id="auto-reconnect" 
-              checked={autoReconnect}
-              onCheckedChange={handleAutoReconnectChange}
-            />
-            <Label htmlFor="auto-reconnect">Auto-reconnect to relays</Label>
-          </div>
+          <Button 
+            variant="outline" 
+            onClick={handleRefreshConnections}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh Connections
+          </Button>
           <Button variant="outline" onClick={handleRestoreDefaults}>
             Restore defaults
           </Button>
