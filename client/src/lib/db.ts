@@ -178,6 +178,15 @@ class NodusDatabase extends Dexie {
       throw error;
     }
   }
+  
+  async clearCurrentUser(): Promise<void> {
+    try {
+      await this.user.clear();
+    } catch (error) {
+      console.error('Error clearing current user:', error);
+      throw error;
+    }
+  }
 }
 
 export const db = new NodusDatabase();

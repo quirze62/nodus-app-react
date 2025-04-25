@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import NDK, { NDKNip07Signer, NDKPrivateKeySigner, NDKUser, NDKEvent, NDKFilter, NDKSubscription } from '@nostr-dev-kit/ndk';
+import NDK, { NDKNip07Signer, NDKPrivateKeySigner, NDKUser, NDKEvent, NDKFilter, NDKSubscription, NDKRelay } from '@nostr-dev-kit/ndk';
 import logger from '../lib/logger';
 import { NostrEvent, NostrProfile, NostrUser } from '../lib/nostr';
 import { db } from '../lib/db';
@@ -519,8 +519,9 @@ export const NdkProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         // If this is a message to us, try to decrypt it
         if (event.pubkey !== currentUser.pubkey) {
           try {
-            const decrypted = await event.decrypt();
-            content = decrypted as string;
+            await event.decrypt();
+            // After decryption, the content should be updated
+            content = event.content;
           } catch (e) {
             logger.error('Failed to decrypt message', e);
             // Keep encrypted content if decryption fails
@@ -643,8 +644,9 @@ export const NdkProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       logger.info(`Adding relay: ${url}`);
       
-      // Add the relay to NDK
-      const relay = await ndk.addRelay(url);
+      // Create a new relay and add it to the pool
+      const relay = new NDKRelay(url);
+      ndk.pool.addRelay(relay);
       
       // Try to connect
       await relay.connect();
@@ -665,12 +667,17 @@ export const NdkProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       logger.info(`Removing relay: ${url}`);
       
-      // Remove the relay from NDK
-      ndk.removeRelay(url);
-      
-      logger.info(`Removed relay ${url}`);
-      
-      return true;
+      // Remove the relay from pool
+      const relay = ndk.pool.relays.get(url);
+      if (relay) {
+        await relay.disconnect();
+        ndk.pool.removeRelay(relay);
+        logger.info(`Removed relay ${url}`);
+        return true;
+      } else {
+        logger.info(`Relay ${url} not found in pool`);
+        return false;
+      }
     } catch (error) {
       logger.error(`Error removing relay ${url}`, error);
       return false;

@@ -72,13 +72,15 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <AuthProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Router />
-            <SimpleDebugPanel />
-          </TooltipProvider>
-        </AuthProvider>
+        <NdkProvider>
+          <AuthProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Router />
+              <SimpleDebugPanel />
+            </TooltipProvider>
+          </AuthProvider>
+        </NdkProvider>
       </ThemeProvider>
     </QueryClientProvider>
   );
