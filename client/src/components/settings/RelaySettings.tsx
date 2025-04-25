@@ -6,35 +6,25 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Wifi, WifiOff, AlertTriangle, Bug, AlertCircle } from "lucide-react";
+import { Trash2, Plus, Wifi, WifiOff, AlertTriangle, Badge as BadgeIcon } from "lucide-react";
 import { DEFAULT_RELAYS, getRelayManager, ManagedRelay } from '@/lib/relayManager';
-import { DEFAULT_RELAYS as SIMPLE_DEFAULT_RELAYS, getRelayManager as getSimpleRelayManager, ManagedRelay as SimpleManagedRelay } from '@/lib/simpleRelayManager';
+import { useNdk } from '@/contexts/NdkContext';
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionStatus } from '../common/ConnectionStatus';
-import { WebSocketTester } from '../common/WebSocketTester';
 
 export default function RelaySettings() {
   const [relays, setRelays] = useState<ManagedRelay[]>([]);
   const [newRelayUrl, setNewRelayUrl] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [autoReconnect, setAutoReconnect] = useState(true);
-  const [useSimpleImplementation, setUseSimpleImplementation] = useState(false);
   const { toast } = useToast();
+  const { ndk } = useNdk();
   
-  // Choose between NDK and simple implementation
-  const relayManager = useSimpleImplementation 
-    ? getSimpleRelayManager() 
-    : getRelayManager();
+  // Use NDK implementation only
+  const relayManager = getRelayManager();
 
-  // Load relays on mount or when implementation changes
+  // Load relays on mount
   useEffect(() => {
-    // Initialize the simple implementation if selected
-    if (useSimpleImplementation) {
-      getSimpleRelayManager().initialize().catch(error => {
-        console.error("Error initializing simple relay manager:", error);
-      });
-    }
-    
     const loadRelays = () => {
       const loadedRelays = relayManager.getAllRelays();
       setRelays(loadedRelays);
@@ -48,7 +38,7 @@ export default function RelaySettings() {
 
     // Clean up interval on unmount
     return () => clearInterval(intervalId);
-  }, [useSimpleImplementation]);
+  }, []);
 
   // Handle adding a new relay
   const handleAddRelay = async () => {
@@ -225,56 +215,17 @@ export default function RelaySettings() {
         {/* Overall connection status */}
         <ConnectionStatus />
         
-        {/* Implementation switch */}
+        {/* NDK Information */}
         <div className="border border-blue-300 rounded-md p-4 bg-blue-50 dark:bg-blue-900/20 mb-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-medium">Connection Method</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {useSimpleImplementation 
-                  ? "Using direct WebSocket implementation (more reliable in Replit)"
-                  : "Using NDK implementation (standard Nostr library)"}
-              </p>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Switch 
-                id="implementation-switch" 
-                checked={useSimpleImplementation}
-                onCheckedChange={(checked) => {
-                  setUseSimpleImplementation(checked);
-                  toast({
-                    title: "Connection Method Changed",
-                    description: checked 
-                      ? "Using direct WebSocket implementation" 
-                      : "Using NDK implementation",
-                  });
-                }}
-              />
-              <Label htmlFor="implementation-switch">Direct WebSockets</Label>
-            </div>
-          </div>
-          
-          {useSimpleImplementation && (
-            <div className="mt-2 p-2 bg-green-100 dark:bg-green-900/20 rounded text-xs text-green-700 dark:text-green-300">
-              <AlertCircle className="h-3 w-3 inline-block mr-1" />
-              <span>Using the custom WebSocket implementation that works in Replit.</span>
-            </div>
-          )}
-        </div>
-        
-        {/* Debug WebSocket Test Section */}
-        <div className="border border-yellow-300 rounded-md p-4 bg-yellow-50 dark:bg-yellow-900/20 mb-4">
           <div className="flex items-center mb-2">
-            <Bug className="h-4 w-4 mr-2 text-yellow-600" />
-            <h3 className="text-sm font-medium text-yellow-600">WebSocket Connection Troubleshooting</h3>
+            <BadgeIcon className="h-4 w-4 mr-2 text-blue-600" />
+            <h3 className="text-sm font-medium text-blue-600">Connection Information</h3>
           </div>
-          <p className="text-xs text-yellow-600 mb-2">
-            This utility tests whether WebSockets work in this environment. If this test fails but HTTP works, it indicates a WebSocket connectivity issue in the hosting environment.
+          <p className="text-xs text-blue-600 mb-2">
+            Using NDK (Nostr Development Kit) for relay connections. NDK provides a robust and standard way to connect to the Nostr network.
           </p>
-          
-          <div>
-            <h4 className="text-sm font-medium mb-2">WebSocket Connection Test</h4>
-            <WebSocketTester />
+          <div className="mt-2 p-2 bg-blue-100 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300">
+            <span>NDK Status: {ndk ? "Initialized" : "Not initialized"}</span>
           </div>
         </div>
         
