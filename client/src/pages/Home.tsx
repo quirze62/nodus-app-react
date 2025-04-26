@@ -29,6 +29,11 @@ export default function Home() {
       <div className="lg:col-span-2 space-y-4">
         <ComposePost />
         
+        <FeedFiltersBar 
+          filters={filters} 
+          onFiltersChange={handleFilterChange} 
+        />
+        
         {isOffline && <OfflineIndicator />}
         
         {isLoading && posts.length === 0 ? (
