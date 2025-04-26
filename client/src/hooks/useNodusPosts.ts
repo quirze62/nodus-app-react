@@ -232,54 +232,46 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         return false;
       }
       
-      // SIMPLIFIED FILTER APPROACH
+      // Filter by followed/following/trending
       // At least one of these filters must match if any is enabled
       const socialFiltersEnabled = filters.showOnlyFollowed || filters.showOnlyFollowing || filters.showTrending;
       
       if (socialFiltersEnabled) {
-        // Instead of trying to detect actual social connections, we'll use a deterministic
-        // approach based on the pubkey of each post, which ensures consistent filtering results
+        let matchesSocialFilter = false;
         
-        // We'll use the first character of the pubkey as a simple way to categorize content
-        // This ensures that the filters always show some posts and it's deterministic
-        if (post.pubkey) {
-          const firstChar = post.pubkey.charAt(0);
-          const secondChar = post.pubkey.charAt(1);
-          
-          // Followers filter - include posts where first character is 0-3
-          if (filters.showOnlyFollowed) {
-            const isFollowerSimulated = '0123'.includes(firstChar);
-            if (isFollowerSimulated) {
-              logger.debug(`✅ Post from 'follower' (simulated): ${post.pubkey.substring(0, 8)}...`);
-              return true;
-            }
+        // Check each enabled filter
+        if (filters.showOnlyFollowed && authUser) {
+          // Check if post is from a follower (someone who follows the current user)
+          const isFromFollower = post.pubkey && followersList.includes(post.pubkey);
+          if (isFromFollower) {
+            logger.debug(`Post from follower: ${post.pubkey}`);
+            matchesSocialFilter = true;
           }
-          
-          // Following filter - include posts where first character is 4-7
-          if (filters.showOnlyFollowing) {
-            const isFollowingSimulated = '4567'.includes(firstChar);
-            if (isFollowingSimulated) {
-              logger.debug(`✅ Post from 'following' (simulated): ${post.pubkey.substring(0, 8)}...`);
-              return true;
-            }
-          }
-          
-          // Trending filter - include posts where first character is 8-9 or a-f
-          if (filters.showTrending) {
-            const isTrendingSimulated = '89abcdef'.includes(firstChar);
-            if (isTrendingSimulated) {
-              // Make it even more selective by checking the second character too
-              const isVeryTrending = 'abcdef'.includes(secondChar);
-              if (isVeryTrending) {
-                logger.debug(`✅ 'Trending' post (simulated): ${post.pubkey.substring(0, 8)}...`);
-                return true;
-              }
-            }
-          }
-          
-          // If we get here with social filters enabled but no match, exclude the post
-          return false;
         }
+        
+        if (filters.showOnlyFollowing && authUser) {
+          // Check if post is from someone the user follows
+          const isFromFollowing = post.pubkey && followingList.includes(post.pubkey);
+          if (isFromFollowing) {
+            logger.debug(`Post from following: ${post.pubkey}`);
+            matchesSocialFilter = true;
+          }
+        }
+        
+        if (filters.showTrending) {
+          // Implementation for trending posts - using reaction counts
+          const hasMany = post.pubkey && usersWithReactions[post.pubkey] && usersWithReactions[post.pubkey] > 1;
+          
+          // Alternative detection - posts with many tags or mentions
+          const hasMultipleTags = post.tags.filter(tag => tag[0] === 't' || tag[0] === 'p').length > 2;
+          
+          if (hasMany || hasMultipleTags) {
+            logger.debug(`Trending post: ${post.pubkey} with ${usersWithReactions[post.pubkey] || 0} reactions`);
+            matchesSocialFilter = true;
+          }
+        }
+        
+        if (!matchesSocialFilter) return false;
       }
       
       return true;
