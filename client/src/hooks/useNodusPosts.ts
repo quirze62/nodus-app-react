@@ -68,31 +68,52 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
       if (!ndk || !authUser) return;
       
       try {
-        // 1. Fetch who the user follows (users that appear in the user's contact list)
+        logger.info('Fetching social graph data...');
+        
+        // 1. FOLLOWS: Get users the current user follows (from contact list)
         logger.info('Fetching users that the current user follows');
         
-        // Create a filter to get the contact list event (kind 3)
+        // Create a subscription to get the most recent contact list event (kind 3)
         const followingFilter: NDKFilter = {
           kinds: [EventKind.CONTACTS],
           authors: [authUser.publicKey]
         };
         
-        const contactEvents = await ndk.fetchEvents(followingFilter);
-        const followingPubkeys: string[] = [];
+        logger.debug(`Fetching follows with filter: ${JSON.stringify(followingFilter)}`);
         
-        contactEvents.forEach(event => {
-          // Extract pubkeys from p tags
-          const pubkeys = event.tags
-            .filter(tag => tag[0] === 'p')
-            .map(tag => tag[1]);
-          
-          followingPubkeys.push(...pubkeys);
+        // First try to get the most recent contact list
+        const subscription = ndk.subscribe(followingFilter, { closeOnEose: true });
+        const followingPubkeys: string[] = [];
+        let contactsEvent: NDKEvent | null = null;
+        
+        subscription.on('event', (event: NDKEvent) => {
+          // We only need the most recent contact list
+          if (!contactsEvent || event.created_at > contactsEvent.created_at) {
+            contactsEvent = event;
+          }
+        });
+        
+        await new Promise<void>((resolve) => {
+          subscription.on('eose', () => {
+            if (contactsEvent) {
+              logger.info(`Found contact list with ${contactsEvent.tags.length} tags`);
+              // Extract pubkeys from p tags
+              const pubkeys = contactsEvent.tags
+                .filter(tag => tag[0] === 'p')
+                .map(tag => tag[1]);
+              
+              followingPubkeys.push(...pubkeys);
+              logger.info(`Loaded ${followingPubkeys.length} followed users`);
+            } else {
+              logger.info('No contact list found');
+            }
+            resolve();
+          });
         });
         
         setFollowingList(followingPubkeys);
-        logger.info(`Loaded ${followingPubkeys.length} followed users`);
         
-        // 2. Fetch followers (users who have the current user in their contact list)
+        // 2. FOLLOWERS: Users who follow the current user
         logger.info('Fetching users that follow the current user');
         
         const followerFilter: NDKFilter = {
@@ -100,46 +121,75 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
           '#p': [authUser.publicKey]
         };
         
-        const followerEvents = await ndk.fetchEvents(followerFilter);
+        logger.debug(`Fetching followers with filter: ${JSON.stringify(followerFilter)}`);
+        
+        const followerSubscription = ndk.subscribe(followerFilter, { closeOnEose: true });
         const followerPubkeys: string[] = [];
         
-        followerEvents.forEach(event => {
+        followerSubscription.on('event', (event: NDKEvent) => {
           // Get the author of each contact list that mentions the current user
-          followerPubkeys.push(event.pubkey);
+          if (!followerPubkeys.includes(event.pubkey)) {
+            followerPubkeys.push(event.pubkey);
+          }
+        });
+        
+        await new Promise<void>((resolve) => {
+          followerSubscription.on('eose', () => {
+            logger.info(`Loaded ${followerPubkeys.length} followers`);
+            resolve();
+          });
         });
         
         setFollowersList(followerPubkeys);
-        logger.info(`Loaded ${followerPubkeys.length} followers`);
         
-        // 3. Get trending users (users with many reactions)
-        logger.info('Identifying trending content creators');
+        // 3. TRENDING: Get posts with high engagement
+        logger.info('Identifying trending content');
         
         const reactionCounts: {[key: string]: number} = {};
+        const eventCounts: {[key: string]: number} = {};
         
         // Get recent reaction events
         const reactionFilter: NDKFilter = {
           kinds: [EventKind.REACTION],
-          limit: 500
+          limit: 500,
+          since: Math.floor(Date.now() / 1000) - 24 * 60 * 60  // Last 24 hours
         };
         
-        const reactionEvents = await ndk.fetchEvents(reactionFilter);
+        logger.debug(`Fetching reactions with filter: ${JSON.stringify(reactionFilter)}`);
         
-        reactionEvents.forEach(event => {
-          // Find the author of the post being reacted to
+        const reactionSubscription = ndk.subscribe(reactionFilter, { closeOnEose: true });
+        
+        reactionSubscription.on('event', (event: NDKEvent) => {
+          // Find the post being reacted to
           const eventTag = event.tags.find(tag => tag[0] === 'e');
           const pubkeyTag = event.tags.find(tag => tag[0] === 'p');
           
           if (eventTag && pubkeyTag) {
+            const eventId = eventTag[1];
             const targetPubkey = pubkeyTag[1];
+            
+            // Count reactions by event
+            eventCounts[eventId] = (eventCounts[eventId] || 0) + 1;
+            
+            // Count reactions by author
             reactionCounts[targetPubkey] = (reactionCounts[targetPubkey] || 0) + 1;
           }
         });
         
+        await new Promise<void>((resolve) => {
+          reactionSubscription.on('eose', () => {
+            logger.info(`Processed reactions for ${Object.keys(reactionCounts).length} users and ${Object.keys(eventCounts).length} events`);
+            resolve();
+          });
+        });
+        
         setUsersWithReactions(reactionCounts);
-        logger.info(`Processed reactions for ${Object.keys(reactionCounts).length} users`);
+        
+        logger.info('Social graph loading complete');
         
       } catch (err) {
         logger.error('Error fetching social graph', err);
+        setError('Failed to load social graph: ' + (err as Error).message);
       }
     };
     
@@ -233,7 +283,18 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
     if (verifiedPosts.length > 0) {
       const filtered = applyFilters(verifiedPosts);
       setPosts(filtered);
-      logger.info(`Applied filters: ${Object.keys(filters).filter(k => filters[k] === true).join(', ')}`);
+      
+      // Create a readable description of active filters
+      const activeFilters = [];
+      if (filters.showOnlyFollowed) activeFilters.push('followers');
+      if (filters.showOnlyFollowing) activeFilters.push('following');
+      if (filters.showTrending) activeFilters.push('trending');
+      if (filters.searchTerm) activeFilters.push(`search:"${filters.searchTerm}"`);
+      if (filters.tags.length > 0) activeFilters.push(`tags:[${filters.tags.join(', ')}]`);
+      if (!filters.includeReposts) activeFilters.push('no-reposts');
+      if (!filters.includeMentions) activeFilters.push('no-mentions');
+      
+      logger.info(`Applied filters: ${activeFilters.join(', ') || 'none'}`);
       logger.info(`Showing ${filtered.length} of ${verifiedPosts.length} posts after filtering`);
     }
   }, [filters, followingList, followersList, usersWithReactions]);
