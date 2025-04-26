@@ -1,0 +1,270 @@
+Step 2: Implement Filtered Feeds
+Objective: Add followers, follows, and trendy feed filters using NDK’s useSubscribe.
+Tasks:
+Update useNodusPosts.ts:
+Add filter modes and logic for followers, follows, and trendy feeds:
+javascript
+// client/src/hooks/useNodusPosts.ts
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-react';
+import { useState, useEffect, useContext } from 'react';
+import { NDKEvent, NDKRelayStatus } from '@nostr-dev-kit/ndk';
+import { DB } from '@/lib/db';
+import { AuthContext } from '@/contexts/AuthContext';
+
+interface Post extends NDKEvent {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+type FilterMode = 'all' | 'followers' | 'follows' | 'trendy';
+
+export function useNodusPosts(filterMode: FilterMode = 'all') {
+  const { ndk } = useNDK();
+  const { user } = useContext(AuthContext);
+  const [verifiedPosts, setVerifiedPosts] = useState<Post[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const db = new DB();
+
+  // Fetch user follows
+  const [follows, setFollows] = useState<string[]>([]);
+  const { events: followEvents } = useSubscribe({
+    filter: { kinds: [3], authors: user ? [user.pubkey] : [] },
+    enabled: !!ndk && !!user
+  });
+
+  useEffect(() => {
+    if (followEvents.length > 0) {
+      const followPubkeys = followEvents[0].tags
+        .filter(tag => tag[0] === 'p')
+        .map(tag => tag[1]);
+      setFollows(followPubkeys);
+    }
+  }, [followEvents]);
+
+  // Fetch follows of follows
+  const { events: followsOfFollowsEvents } = useSubscribe({
+    filter: { kinds: [3], authors: follows },
+    enabled: !!ndk && follows.length > 0 && filterMode === 'follows'
+  });
+
+  useEffect(() => {
+    if (followsOfFollowsEvents.length > 0) {
+      const secondDegreePubkeys = followsOfFollowsEvents
+        .flatMap(event => event.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]))
+        .filter((pubkey, index, self) => self.indexOf(pubkey) === index);
+      setFollowsOfFollows(secondDegreePubkeys);
+    }
+  }, [followsOfFollowsEvents]);
+
+  // Fetch posts based on filter mode
+  const getPostFilter = () => {
+    switch (filterMode) {
+      case 'followers':
+        return { kinds: [1], authors: follows, limit: 50 };
+      case 'follows':
+        return { kinds: [1], authors: followsOfFollows, limit: 50 };
+      case 'trendy':
+        return { kinds: [1], limit: 50, since: Math.floor(Date.now() / 1000) - 24 * 3600 };
+      default:
+        return { kinds: [1], limit: 50 };
+    }
+  };
+
+  const { events } = useSubscribe({
+    filter: getPostFilter(),
+    enabled: !!ndk && (filterMode !== 'follows' || followsOfFollows.length > 0)
+  });
+
+  // Fetch engagement for trendy feed
+  const { events: engagementEvents } = useSubscribe({
+    filter: { kinds: [6, 7], limit: 1000, since: Math.floor(Date.now() / 1000) - 24 * 3600 },
+    enabled: !!ndk && filterMode === 'trendy'
+  });
+
+  useEffect(() => {
+    const filterPosts = async () => {
+      let filteredPosts: Post[] = [];
+      for (const event of events) {
+        const isVerified = await db.isNip05Verified(event.pubkey, ndk);
+        if (isVerified) filteredPosts.push(event as Post);
+      }
+
+      if (filterMode === 'trendy') {
+        // Rank posts by engagement (likes + reposts)
+        const engagementCounts = engagementEvents.reduce((acc, event) => {
+          const postId = event.tags.find(tag => tag[0] === 'e')?.[1];
+          if (postId) acc[postId] = (acc[postId] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        filteredPosts = filteredPosts
+          .map(post => ({
+            ...post,
+            engagement: engagementCounts[post.id] || 0
+          }))
+          .sort((a, b) => b.engagement - a.engagement)
+          .slice(0, 50);
+      }
+
+      setVerifiedPosts(filteredPosts);
+    };
+    filterPosts().catch(err => setError('Failed to filter posts: ' + err.message));
+  }, [events, engagementEvents, ndk, filterMode]);
+
+  const ensureConnectedRelays = async () => {
+    if (!ndk) {
+      setError('NDK not initialized');
+      return false;
+    }
+    const connected = Array.from(ndk.pool.relays.values()).filter(
+      r => r.status === NDKRelayStatus.CONNECTED && r.write
+    );
+    if (connected.length === 0) {
+      setError('No write-enabled relays connected');
+      console.log('Available relays:', Array.from(ndk.pool.relays.entries()));
+      return false;
+    }
+    return true;
+  };
+
+  const createPost = async (content: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to post');
+      return false;
+    }
+    if (!(await ensureConnectedRelays())) return false;
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 1;
+      event.content = content;
+      event.created_at = Math.floor(Date.now() / 1000);
+      event.tags = [['cluster', 'city1']];
+      await event.sign();
+      console.log('Publishing post:', event);
+      await ndk.publish(event);
+      console.log('Post published successfully');
+      return true;
+    } catch (err) {
+      setError('Failed to post: ' + err.message);
+      console.error('Post error:', err);
+      return false;
+    }
+  };
+
+  const likePost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to like');
+      return false;
+    }
+    if (!(await ensureConnectedRelays())) return false;
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 7;
+      event.content = '+';
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      console.log('Publishing like:', event);
+      await ndk.publish(event);
+      console.log('Like published successfully');
+      return true;
+    } catch (err) {
+      setError('Failed to like: ' + err.message);
+      console.error('Like error:', err);
+      return false;
+    }
+  };
+
+  const repostPost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to repost');
+      return false;
+    }
+    if (!(await ensureConnectedRelays())) return false;
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 6;
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      console.log('Publishing repost:', event);
+      await ndk.publish(event);
+      console.log('Repost published successfully');
+      return true;
+    } catch (err) {
+      setError('Failed to repost: ' + err.message);
+      console.error('Repost error:', err);
+      return false;
+    }
+  };
+
+  const commentPost = async (postId: string, pubkey: string, content: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to comment');
+      return false;
+    }
+    if (!(await ensureConnectedRelays())) return false;
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 1;
+      event.content = content;
+      event.created_at = Math.floor(Date.now() / 1000);
+      event.tags = [['e', postId, '', 'reply'], ['p', pubkey], ['cluster', 'city1']];
+      await event.sign();
+      console.log('Publishing comment:', event);
+      await ndk.publish(event);
+      console.log('Comment published successfully');
+      return true;
+    } catch (err) {
+      setError('Failed to comment: ' + err.message);
+      console.error('Comment error:', err);
+      return false;
+    }
+  };
+
+  return { posts: verifiedPosts, createPost, likePost, repostPost, commentPost, error };
+}
+Update Home.tsx:
+Add a UI to select filter modes:
+javascript
+// client/src/pages/Home.tsx
+import { useContext, useState } from 'react';
+import { AuthContext } from '@/contexts/AuthContext';
+import { useNodusPosts } from '@/hooks/useNodusPosts';
+import { PostCard } from '@/components/feed/PostCard';
+import { Login } from '@/components/Login';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
+
+export const Home = () => {
+  const { user, error: authError } = useContext(AuthContext);
+  const [filterMode, setFilterMode] = useState<'all' | 'followers' | 'follows' | 'trendy'>('all');
+  const { posts, error: postError } = useNodusPosts(filterMode);
+
+  return (
+    <div>
+      <h1>Nodus Feed</h1>
+      <OfflineIndicator />
+      {authError && <p style={{ color: 'red' }}>{authError}</p>}
+      {postError && <p style={{ color: 'red' }}>{postError}</p>}
+      <div>
+        <label>Filter: </label>
+        <select value={filterMode} onChange={e => setFilterMode(e.target.value as any)}>
+          <option value="all">All Posts</option>
+          <option value="followers">Followers</option>
+          <option value="follows">Follows of Follows</option>
+          <option value="trendy">Trendy</option>
+        </select>
+      </div>
+      {!user && <Login />}
+      {user && (
+        <ul>
+          {posts.map(post => (
+            <PostCard key={post.id} post={post} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
