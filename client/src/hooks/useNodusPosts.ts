@@ -56,27 +56,28 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
     closeOnEose: false
   };
   
-  // State to track users the current user is following
+  // State to track users the current user is following and followers
   const [followingList, setFollowingList] = useState<string[]>([]);
+  const [followersList, setFollowersList] = useState<string[]>([]);
+  const [usersWithReactions, setUsersWithReactions] = useState<{[key: string]: number}>({});
   
-  // Function to fetch following list from NDK
+  // Function to fetch following list and followers from NDK
   useEffect(() => {
     // Fetch following list when user is authenticated
-    const fetchFollowing = async () => {
+    const fetchSocialGraph = async () => {
       if (!ndk || !authUser) return;
       
       try {
-        // This is a placeholder implementation
-        // In a real implementation, we would fetch the user's contact list from NDK
+        // 1. Fetch who the user follows (users that appear in the user's contact list)
         logger.info('Fetching users that the current user follows');
         
         // Create a filter to get the contact list event (kind 3)
-        const filter: NDKFilter = {
+        const followingFilter: NDKFilter = {
           kinds: [EventKind.CONTACTS],
           authors: [authUser.publicKey]
         };
         
-        const contactEvents = await ndk.fetchEvents(filter);
+        const contactEvents = await ndk.fetchEvents(followingFilter);
         const followingPubkeys: string[] = [];
         
         contactEvents.forEach(event => {
@@ -90,12 +91,59 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         
         setFollowingList(followingPubkeys);
         logger.info(`Loaded ${followingPubkeys.length} followed users`);
+        
+        // 2. Fetch followers (users who have the current user in their contact list)
+        logger.info('Fetching users that follow the current user');
+        
+        const followerFilter: NDKFilter = {
+          kinds: [EventKind.CONTACTS],
+          '#p': [authUser.publicKey]
+        };
+        
+        const followerEvents = await ndk.fetchEvents(followerFilter);
+        const followerPubkeys: string[] = [];
+        
+        followerEvents.forEach(event => {
+          // Get the author of each contact list that mentions the current user
+          followerPubkeys.push(event.pubkey);
+        });
+        
+        setFollowersList(followerPubkeys);
+        logger.info(`Loaded ${followerPubkeys.length} followers`);
+        
+        // 3. Get trending users (users with many reactions)
+        logger.info('Identifying trending content creators');
+        
+        const reactionCounts: {[key: string]: number} = {};
+        
+        // Get recent reaction events
+        const reactionFilter: NDKFilter = {
+          kinds: [EventKind.REACTION],
+          limit: 500
+        };
+        
+        const reactionEvents = await ndk.fetchEvents(reactionFilter);
+        
+        reactionEvents.forEach(event => {
+          // Find the author of the post being reacted to
+          const eventTag = event.tags.find(tag => tag[0] === 'e');
+          const pubkeyTag = event.tags.find(tag => tag[0] === 'p');
+          
+          if (eventTag && pubkeyTag) {
+            const targetPubkey = pubkeyTag[1];
+            reactionCounts[targetPubkey] = (reactionCounts[targetPubkey] || 0) + 1;
+          }
+        });
+        
+        setUsersWithReactions(reactionCounts);
+        logger.info(`Processed reactions for ${Object.keys(reactionCounts).length} users`);
+        
       } catch (err) {
-        logger.error('Error fetching following list', err);
+        logger.error('Error fetching social graph', err);
       }
     };
     
-    fetchFollowing();
+    fetchSocialGraph();
   }, [ndk, authUser]);
   
   // Function to apply filters to posts
@@ -144,25 +192,33 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         // Check each enabled filter
         if (filters.showOnlyFollowed && authUser) {
           // Check if post is from a follower (someone who follows the current user)
-          // This requires integration with NDK's follow lists
-          // For now, we'll use a simple check if the post mentions our pubkey
-          const isFromFollower = post.tags.some(tag => tag[0] === 'p' && tag[1] === authUser.publicKey);
-          if (isFromFollower) matchesSocialFilter = true;
+          const isFromFollower = post.pubkey && followersList.includes(post.pubkey);
+          if (isFromFollower) {
+            logger.debug(`Post from follower: ${post.pubkey}`);
+            matchesSocialFilter = true;
+          }
         }
         
         if (filters.showOnlyFollowing && authUser) {
           // Check if post is from someone the user follows
-          // This requires integration with NDK's follow lists
           const isFromFollowing = post.pubkey && followingList.includes(post.pubkey);
-          if (isFromFollowing) matchesSocialFilter = true;
+          if (isFromFollowing) {
+            logger.debug(`Post from following: ${post.pubkey}`);
+            matchesSocialFilter = true;
+          }
         }
         
         if (filters.showTrending) {
-          // Implementation for trending posts
-          // For now, we'll consider posts with more than 2 tags or mentions as trending
-          // In a real implementation, we would evaluate reaction count or other metrics
+          // Implementation for trending posts - using reaction counts
+          const hasMany = post.pubkey && usersWithReactions[post.pubkey] && usersWithReactions[post.pubkey] > 1;
+          
+          // Alternative detection - posts with many tags or mentions
           const hasMultipleTags = post.tags.filter(tag => tag[0] === 't' || tag[0] === 'p').length > 2;
-          if (hasMultipleTags) matchesSocialFilter = true;
+          
+          if (hasMany || hasMultipleTags) {
+            logger.debug(`Trending post: ${post.pubkey} with ${usersWithReactions[post.pubkey] || 0} reactions`);
+            matchesSocialFilter = true;
+          }
         }
         
         if (!matchesSocialFilter) return false;
@@ -172,13 +228,15 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
     });
   };
   
-  // Update filtered posts when filters change
+  // Update filtered posts when filters change or when following/follower lists change
   useEffect(() => {
     if (verifiedPosts.length > 0) {
       const filtered = applyFilters(verifiedPosts);
       setPosts(filtered);
+      logger.info(`Applied filters: ${Object.keys(filters).filter(k => filters[k] === true).join(', ')}`);
+      logger.info(`Showing ${filtered.length} of ${verifiedPosts.length} posts after filtering`);
     }
-  }, [filters]);
+  }, [filters, followingList, followersList, usersWithReactions]);
   
   // Set up subscription to posts
   useEffect(() => {
