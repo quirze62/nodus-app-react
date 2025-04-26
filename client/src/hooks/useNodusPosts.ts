@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
-import { NDKEvent, NDKUser, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
-import { useNdk } from '../contexts/NdkContext';
-import { useAuth } from '../contexts/AuthContext';
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-hooks';
+import { useState, useEffect, useContext } from 'react';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { AuthContext } from '@/contexts/AuthContext';
 import logger from '../lib/logger';
 import { NostrEvent, EventKind } from '../lib/nostr';
 import { db } from '../lib/db';
 import { isNIP05Verified, isPersonallyApproved } from '../lib/ndk';
-import { FeedFilters, DEFAULT_FILTERS } from '@/components/feed/FeedFilters';
+import { FilterMode } from '@/components/feed/FeedFilters';
 
 // Helper function to check if a user is a valid Nodus network member
 async function isValidNodusMember(user: NDKUser): Promise<boolean> {
