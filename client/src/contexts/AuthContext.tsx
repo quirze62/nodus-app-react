@@ -49,27 +49,53 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const loadUser = async () => {
       try {
         const savedKey = localStorage.getItem('nostr_private_key');
-        if (savedKey && ndk) {
-          // Convert NDK user to NostrUser format
-          const signer = new NDKPrivateKeySigner(savedKey);
-          ndk.signer = signer;
-          const ndkUser = await signer.user();
+        if (!savedKey) {
+          setIsLoading(false);
+          return;
+        }
+        
+        // Wait for NDK to be initialized if needed
+        if (!ndk) {
+          console.log('Waiting for NDK initialization in loadUser...');
+          let attempts = 0;
+          const maxAttempts = 10;
           
-          if (ndkUser) {
-            // Generate nsec from private key
-            const nsec = nostrTools.nip19.nsecEncode(savedKey);
-            
-            const nostrUser: NostrUser = {
-              publicKey: ndkUser.pubkey,
-              npub: ndkUser.npub || nostrTools.nip19.npubEncode(ndkUser.pubkey),
-              privateKey: savedKey,
-              nsec: nsec,
-            };
-            
-            setUser(nostrUser);
-            setError(null);
-            console.log('Logged in user:', nostrUser);
+          while (!ndk && attempts < maxAttempts) {
+            await new Promise(r => setTimeout(r, 500)); // Wait 500ms between checks
+            attempts++;
           }
+          
+          if (!ndk) {
+            console.warn('NDK initialization timed out in loadUser');
+            setIsLoading(false);
+            return;
+          }
+          
+          console.log('NDK initialized after waiting in loadUser');
+        }
+        
+        // Now that we have both a saved key and an initialized NDK
+        console.log('Creating signer with saved key');
+        // Convert NDK user to NostrUser format
+        const signer = new NDKPrivateKeySigner(savedKey);
+        ndk.signer = signer;
+        const ndkUser = await signer.user();
+        
+        if (ndkUser) {
+          console.log('Successfully loaded user from saved key');
+          // Generate nsec from private key
+          const nsec = nostrTools.nip19.nsecEncode(savedKey);
+          
+          const nostrUser: NostrUser = {
+            publicKey: ndkUser.pubkey,
+            npub: ndkUser.npub || nostrTools.nip19.npubEncode(ndkUser.pubkey),
+            privateKey: savedKey,
+            nsec: nsec,
+          };
+          
+          setUser(nostrUser);
+          setError(null);
+          console.log('Logged in user:', ndkUser.pubkey);
         }
       } catch (error) {
         console.error('Error loading user:', error);
@@ -89,8 +115,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   // Login with nsec or private key using NDK implementation
   const login = async (nsecOrPrivKey: string): Promise<boolean> => {
     try {
-      if (!ndk) throw new Error('NDK not initialized');
       setIsLoading(true);
+      
+      // Check if NDK is initialized, if not, wait for initialization
+      if (!ndk) {
+        console.log('Waiting for NDK initialization...');
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (!ndk && attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 500)); // Wait 500ms between checks
+          attempts++;
+        }
+        
+        if (!ndk) {
+          throw new Error('NDK initialization timed out');
+        }
+        
+        console.log('NDK initialized after waiting.');
+      }
       
       // Convert nsec to hex private key if needed
       let privateKey = nsecOrPrivKey;
@@ -110,14 +153,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         nsec = nostrTools.nip19.nsecEncode(privateKey);
       }
       
+      console.log('Creating signer with provided key');
       // Use NDK implementation to login with private key
       const signer = new NDKPrivateKeySigner(privateKey);
       ndk.signer = signer;
+      
+      console.log('Getting user from signer');
       const ndkUser = await signer.user();
       
       if (!ndkUser) {
         throw new Error('Failed to login with provided key');
       }
+      
+      console.log('Successfully retrieved user pubkey:', ndkUser.pubkey);
       
       // Convert NDK user to NostrUser format
       const loggedInUser: NostrUser = {
@@ -155,29 +203,53 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const generateNewKeys = async (): Promise<NostrUser> => {
     try {
-      if (!ndk) throw new Error('NDK not initialized');
       setIsLoading(true);
       
-      // Generate new key pair using nostr-tools
-      const privateKey = nostrTools.generatePrivateKey();
-      const publicKey = nostrTools.getPublicKey(privateKey);
-      const npub = nostrTools.nip19.npubEncode(publicKey);
-      const nsec = nostrTools.nip19.nsecEncode(privateKey);
+      // Check if NDK is initialized, if not, wait for initialization
+      if (!ndk) {
+        console.log('Waiting for NDK initialization...');
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (!ndk && attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 500)); // Wait 500ms between checks
+          attempts++;
+        }
+        
+        if (!ndk) {
+          throw new Error('NDK initialization timed out');
+        }
+        
+        console.log('NDK initialized after waiting.');
+      }
       
-      const signer = new NDKPrivateKeySigner(privateKey);
+      // Generate new key pair using crypto API
+      const privateKeyBytes = window.crypto.getRandomValues(new Uint8Array(32));
+      const privateKeyHex = Array.from(privateKeyBytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      
+      // Get public key using nostr-tools
+      const publicKey = nostrTools.getPublicKey(privateKeyHex);
+      const npub = nostrTools.nip19.npubEncode(publicKey);
+      const nsec = nostrTools.nip19.nsecEncode(privateKeyHex);
+      
+      console.log('Generated new keys successfully');
+      
+      const signer = new NDKPrivateKeySigner(privateKeyHex);
       ndk.signer = signer;
       
       // Create NostrUser object
       const newUser: NostrUser = {
         publicKey: publicKey,
         npub: npub,
-        privateKey: privateKey,
+        privateKey: privateKeyHex,
         nsec: nsec,
       };
       
       // Set user in state
       setUser(newUser);
-      localStorage.setItem('nostr_private_key', privateKey);
+      localStorage.setItem('nostr_private_key', privateKeyHex);
       setError(null);
       
       toast({

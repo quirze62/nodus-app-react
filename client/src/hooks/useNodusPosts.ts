@@ -177,9 +177,26 @@ export function useNodusPosts(limit: number = 50) {
       return null;
     }
     
-    if (!ndk.signer) {
+    if (!ndk.signer || !authUser) {
       setError('Authentication required to create posts');
       logger.error('Attempted to create post without authentication');
+      return null;
+    }
+    
+    // Validate if the user is a valid Nodus member
+    try {
+      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
+      await ndkCurrentUser.fetchProfile();
+      
+      const isValid = await isValidNodusMember(ndkCurrentUser);
+      if (!isValid) {
+        setError('Only verified Nodus members can post');
+        logger.error('Non-verified user attempted to create post');
+        return null;
+      }
+    } catch (err) {
+      logger.error('Error verifying user status', err);
+      setError('Failed to verify user status');
       return null;
     }
     
@@ -228,9 +245,26 @@ export function useNodusPosts(limit: number = 50) {
       return null;
     }
     
-    if (!ndk.signer) {
+    if (!ndk.signer || !authUser) {
       setError('Authentication required to like posts');
       logger.error('Attempted to like post without authentication');
+      return null;
+    }
+    
+    // Validate if the user is a valid Nodus member
+    try {
+      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
+      await ndkCurrentUser.fetchProfile();
+      
+      const isValid = await isValidNodusMember(ndkCurrentUser);
+      if (!isValid) {
+        setError('Only verified Nodus members can like posts');
+        logger.error('Non-verified user attempted to like a post');
+        return null;
+      }
+    } catch (err) {
+      logger.error('Error verifying user status for like', err);
+      setError('Failed to verify user status');
       return null;
     }
     
@@ -278,9 +312,26 @@ export function useNodusPosts(limit: number = 50) {
       return null;
     }
     
-    if (!ndk.signer) {
+    if (!ndk.signer || !authUser) {
       setError('Authentication required to repost');
       logger.error('Attempted to repost without authentication');
+      return null;
+    }
+    
+    // Validate if the user is a valid Nodus member
+    try {
+      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
+      await ndkCurrentUser.fetchProfile();
+      
+      const isValid = await isValidNodusMember(ndkCurrentUser);
+      if (!isValid) {
+        setError('Only verified Nodus members can repost');
+        logger.error('Non-verified user attempted to repost');
+        return null;
+      }
+    } catch (err) {
+      logger.error('Error verifying user status for repost', err);
+      setError('Failed to verify user status');
       return null;
     }
     
@@ -334,9 +385,26 @@ export function useNodusPosts(limit: number = 50) {
       return null;
     }
     
-    if (!ndk.signer) {
+    if (!ndk.signer || !authUser) {
       setError('Authentication required to reply');
       logger.error('Attempted to reply without authentication');
+      return null;
+    }
+    
+    // Validate if the user is a valid Nodus member
+    try {
+      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
+      await ndkCurrentUser.fetchProfile();
+      
+      const isValid = await isValidNodusMember(ndkCurrentUser);
+      if (!isValid) {
+        setError('Only verified Nodus members can comment on posts');
+        logger.error('Non-verified user attempted to comment on a post');
+        return null;
+      }
+    } catch (err) {
+      logger.error('Error verifying user status for comment', err);
+      setError('Failed to verify user status');
       return null;
     }
     
@@ -397,7 +465,7 @@ export function useNodusPosts(limit: number = 50) {
     repostPost,
     replyToPost,
     commentPost: replyToPost, // Alias for replyToPost for more intuitive naming
-    isAuthenticated: !!ndk?.signer
+    isAuthenticated: !!ndk?.signer && !!authUser
   };
 }
 
