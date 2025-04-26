@@ -114,13 +114,10 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           />
         </div>
         
-        {/* Filter Mode Selector Dropdown with Nodus styling */}
+        {/* Filter Mode Selector Dropdown */}
         <select 
-          className="px-3 py-2 text-sm font-medium bg-blue-50 text-blue-600 border border-blue-200 
-                     hover:bg-blue-100 hover:text-blue-700 rounded-md
-                     dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-900/50"
+          className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-sm font-medium"
           value={filters.filterMode}
-          aria-label="Select feed filter mode"
           onChange={(e) => {
             const newMode = e.target.value as FilterMode;
             onFiltersChange({
@@ -134,8 +131,8 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           }}
         >
           <option value="all">All Posts</option>
-          <option value="followers">From Followers</option>
-          <option value="follows">People I Follow</option>
+          <option value="followers">Followers</option>
+          <option value="follows">Following</option>
           <option value="trending">Trending</option>
         </select>
         

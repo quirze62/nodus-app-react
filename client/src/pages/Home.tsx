@@ -9,43 +9,16 @@ import TrendingTopics from '@/components/widgets/TrendingTopics';
 import SuggestedUsers from '@/components/widgets/SuggestedUsers';
 import { NostrEvent } from '@/lib/nostr';
 import { Skeleton } from '@/components/ui/skeleton';
-import { FeedFiltersBar, DEFAULT_FILTERS, FeedFilters, FilterMode } from '@/components/feed/FeedFilters';
+import { FeedFiltersBar, DEFAULT_FILTERS, FeedFilters } from '@/components/feed/FeedFilters';
 
 export default function Home() {
-  // State for filter mode selection
-  const [filterMode, setFilterMode] = useState<FilterMode>('all');
-  
   // Use our pure NDK implementation with subscription-based updates
-  const { posts, isLoading, error, createPost, filters, setFilters } = useNodusPosts(50, {}, filterMode);
+  const { posts, isLoading, error, createPost, filters, setFilters } = useNodusPosts(50);
   const { isOffline } = useOffline();
   
   // Handle filter changes
   const handleFilterChange = (newFilters: FeedFilters) => {
     setFilters(newFilters);
-    
-    // Sync filter mode with the checkboxes
-    if (newFilters.showOnlyFollowed && !newFilters.showOnlyFollowing && !newFilters.showTrending) {
-      setFilterMode('followers');
-    } else if (!newFilters.showOnlyFollowed && newFilters.showOnlyFollowing && !newFilters.showTrending) {
-      setFilterMode('follows');
-    } else if (!newFilters.showOnlyFollowed && !newFilters.showOnlyFollowing && newFilters.showTrending) {
-      setFilterMode('trending');
-    } else {
-      setFilterMode('all');
-    }
-  };
-  
-  // Handle filter mode selection
-  const handleFilterModeChange = (mode: FilterMode) => {
-    setFilterMode(mode);
-    
-    // Update filter checkboxes to match the selected mode
-    setFilters({
-      ...filters,
-      showOnlyFollowed: mode === 'followers',
-      showOnlyFollowing: mode === 'follows',
-      showTrending: mode === 'trending'
-    });
   };
   
   // Display only authentic data from Nostr relays
@@ -57,7 +30,7 @@ export default function Home() {
         <ComposePost />
         
         <FeedFiltersBar 
-          filters={{...filters, filterMode}} 
+          filters={filters} 
           onFiltersChange={handleFilterChange} 
         />
         
