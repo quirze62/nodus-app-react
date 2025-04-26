@@ -128,17 +128,8 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                       id="followed" 
                       checked={filters.showOnlyFollowed}
                       onCheckedChange={() => {
-                        // If turning this on, turn off other exclusive filters
-                        if (!filters.showOnlyFollowed) {
-                          onFiltersChange({
-                            ...filters,
-                            showOnlyFollowed: true,
-                            showOnlyFollowing: false,
-                            showTrending: false
-                          });
-                        } else {
-                          toggleFilter('showOnlyFollowed');
-                        }
+                        // Just toggle this filter without affecting others
+                        toggleFilter('showOnlyFollowed');
                       }}
                     />
                     <Label htmlFor="followed" className="flex items-center gap-2">
@@ -152,17 +143,8 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                       id="following" 
                       checked={filters.showOnlyFollowing}
                       onCheckedChange={() => {
-                        // If turning this on, turn off other exclusive filters
-                        if (!filters.showOnlyFollowing) {
-                          onFiltersChange({
-                            ...filters,
-                            showOnlyFollowing: true,
-                            showOnlyFollowed: false,
-                            showTrending: false
-                          });
-                        } else {
-                          toggleFilter('showOnlyFollowing');
-                        }
+                        // Just toggle this filter without affecting others
+                        toggleFilter('showOnlyFollowing');
                       }}
                     />
                     <Label htmlFor="following" className="flex items-center gap-2">
@@ -176,17 +158,8 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                       id="trending" 
                       checked={filters.showTrending}
                       onCheckedChange={() => {
-                        // If turning this on, turn off other exclusive filters
-                        if (!filters.showTrending) {
-                          onFiltersChange({
-                            ...filters,
-                            showTrending: true,
-                            showOnlyFollowed: false,
-                            showOnlyFollowing: false
-                          });
-                        } else {
-                          toggleFilter('showTrending');
-                        }
+                        // Just toggle this filter without affecting others
+                        toggleFilter('showTrending');
                       }}
                     />
                     <Label htmlFor="trending" className="flex items-center gap-2">
@@ -290,6 +263,7 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           
           {filters.showOnlyFollowed && (
             <Badge variant="outline" className="flex items-center gap-1 bg-blue-100 dark:bg-blue-900">
+              <Users className="h-3 w-3 text-blue-500" />
               From My Followers
               <X 
                 className="h-3 w-3 cursor-pointer" 
@@ -300,6 +274,7 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           
           {filters.showOnlyFollowing && (
             <Badge variant="outline" className="flex items-center gap-1 bg-blue-100 dark:bg-blue-900">
+              <Users className="h-3 w-3 text-green-500" />
               From Accounts I Follow
               <X 
                 className="h-3 w-3 cursor-pointer" 
@@ -310,6 +285,7 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           
           {filters.showTrending && (
             <Badge variant="outline" className="flex items-center gap-1 bg-blue-100 dark:bg-blue-900">
+              <TrendingUp className="h-3 w-3 text-orange-500" />
               Trending Posts
               <X 
                 className="h-3 w-3 cursor-pointer" 

@@ -56,6 +56,48 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
     closeOnEose: false
   };
   
+  // State to track users the current user is following
+  const [followingList, setFollowingList] = useState<string[]>([]);
+  
+  // Function to fetch following list from NDK
+  useEffect(() => {
+    // Fetch following list when user is authenticated
+    const fetchFollowing = async () => {
+      if (!ndk || !authUser) return;
+      
+      try {
+        // This is a placeholder implementation
+        // In a real implementation, we would fetch the user's contact list from NDK
+        logger.info('Fetching users that the current user follows');
+        
+        // Create a filter to get the contact list event (kind 3)
+        const filter: NDKFilter = {
+          kinds: [EventKind.CONTACTS],
+          authors: [authUser.publicKey]
+        };
+        
+        const contactEvents = await ndk.fetchEvents(filter);
+        const followingPubkeys: string[] = [];
+        
+        contactEvents.forEach(event => {
+          // Extract pubkeys from p tags
+          const pubkeys = event.tags
+            .filter(tag => tag[0] === 'p')
+            .map(tag => tag[1]);
+          
+          followingPubkeys.push(...pubkeys);
+        });
+        
+        setFollowingList(followingPubkeys);
+        logger.info(`Loaded ${followingPubkeys.length} followed users`);
+      } catch (err) {
+        logger.error('Error fetching following list', err);
+      }
+    };
+    
+    fetchFollowing();
+  }, [ndk, authUser]);
+  
   // Function to apply filters to posts
   const applyFilters = (posts: NostrEvent[]): NostrEvent[] => {
     if (!posts || posts.length === 0) return [];
@@ -92,8 +134,39 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         return false;
       }
       
-      // Filtering logic for followers will be implemented with NDK's follow lists
-      // For now, this is a placeholder that will need to be integrated with NDK's follow data
+      // Filter by followed/following/trending
+      // At least one of these filters must match if any is enabled
+      const socialFiltersEnabled = filters.showOnlyFollowed || filters.showOnlyFollowing || filters.showTrending;
+      
+      if (socialFiltersEnabled) {
+        let matchesSocialFilter = false;
+        
+        // Check each enabled filter
+        if (filters.showOnlyFollowed && authUser) {
+          // Check if post is from a follower (someone who follows the current user)
+          // This requires integration with NDK's follow lists
+          // For now, we'll use a simple check if the post mentions our pubkey
+          const isFromFollower = post.tags.some(tag => tag[0] === 'p' && tag[1] === authUser.publicKey);
+          if (isFromFollower) matchesSocialFilter = true;
+        }
+        
+        if (filters.showOnlyFollowing && authUser) {
+          // Check if post is from someone the user follows
+          // This requires integration with NDK's follow lists
+          const isFromFollowing = post.pubkey && followingList.includes(post.pubkey);
+          if (isFromFollowing) matchesSocialFilter = true;
+        }
+        
+        if (filters.showTrending) {
+          // Implementation for trending posts
+          // For now, we'll consider posts with more than 2 tags or mentions as trending
+          // In a real implementation, we would evaluate reaction count or other metrics
+          const hasMultipleTags = post.tags.filter(tag => tag[0] === 't' || tag[0] === 'p').length > 2;
+          if (hasMultipleTags) matchesSocialFilter = true;
+        }
+        
+        if (!matchesSocialFilter) return false;
+      }
       
       return true;
     });
