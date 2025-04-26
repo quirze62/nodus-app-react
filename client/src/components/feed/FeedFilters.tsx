@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Search, Filter, X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, Filter, X, TrendingUp, Users } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -112,13 +112,13 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
         
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="outline" size="icon">
+            <Button variant="outline" size="icon" className="bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 hover:text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-900/50">
               <Filter className="h-4 w-4" />
             </Button>
           </PopoverTrigger>
           <PopoverContent className="w-80">
             <div className="space-y-4">
-              <h3 className="font-medium">Filter Options</h3>
+              <h3 className="font-medium text-blue-600 dark:text-blue-400">Filter Options</h3>
               
               <div className="space-y-2">
                 <h4 className="text-sm font-medium mb-2">View Mode</h4>
@@ -141,7 +141,10 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                         }
                       }}
                     />
-                    <Label htmlFor="followed">Show posts from my followers</Label>
+                    <Label htmlFor="followed" className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-blue-500" /> 
+                      Show posts from my followers
+                    </Label>
                   </div>
                   
                   <div className="flex items-center space-x-2">
@@ -162,7 +165,10 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                         }
                       }}
                     />
-                    <Label htmlFor="following">Show posts from accounts I follow</Label>
+                    <Label htmlFor="following" className="flex items-center gap-2">
+                      <Users className="h-4 w-4 text-green-500" />
+                      Show posts from accounts I follow
+                    </Label>
                   </div>
                   
                   <div className="flex items-center space-x-2">
@@ -183,7 +189,10 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                         }
                       }}
                     />
-                    <Label htmlFor="trending">Show trending posts</Label>
+                    <Label htmlFor="trending" className="flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4 text-orange-500" />
+                      Show trending posts
+                    </Label>
                   </div>
                 </div>
                 
