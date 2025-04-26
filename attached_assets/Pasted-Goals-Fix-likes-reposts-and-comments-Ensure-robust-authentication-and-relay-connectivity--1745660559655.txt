@@ -1,0 +1,441 @@
+Goals:
+Fix likes, reposts, and comments.
+
+Ensure robust authentication and relay connectivity.
+
+Resolve TypeScript errors.
+
+Add basic clustering for Matryoshka testing.
+Step 1: Fix Social Interactions
+Tasks:
+Update useNodusPosts.ts:
+Add error handling, signer checks, and comment functionality:
+javascript
+// client/src/hooks/useNodusPosts.ts
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-react';
+import { useState, useEffect } from 'react';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { DB } from '@/lib/db';
+
+interface Post extends NDKEvent {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+export function useNodusPosts() {
+  const { ndk } = useNDK();
+  const [verifiedPosts, setVerifiedPosts] = useState<Post[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const db = new DB();
+  const { events } = useSubscribe({
+    filter: { kinds: [1], limit: 50 },
+    enabled: !!ndk
+  });
+
+  useEffect(() => {
+    const filterPosts = async () => {
+      const verified: Post[] = [];
+      for (const event of events) {
+        const verified = await db.isNip05Verified(event.pubkey, ndk);
+        if (verified) verified.push(event as Post);
+      }
+      setVerifiedPosts(verified);
+    };
+    filterPosts().catch(err => setError('Failed to filter posts: ' + err.message));
+  }, [events, ndk]);
+
+  const createPost = async (content: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to post');
+      throw new Error('NDK or signer not initialized');
+    }
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 1;
+      event.content = content;
+      event.created_at = Math.floor(Date.now() / 1000);
+      event.tags = [['cluster', 'city1']];
+      await event.sign();
+      await ndk.publish(event);
+      return true;
+    } catch (err) {
+      setError('Failed to post: ' + err.message);
+      return false;
+    }
+  };
+
+  const likePost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to like');
+      throw new Error('NDK or signer not initialized');
+    }
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 7;
+      event.content = '+';
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      await ndk.publish(event);
+      return true;
+    } catch (err) {
+      setError('Failed to like: ' + err.message);
+      return false;
+    }
+  };
+
+  const repostPost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to repost');
+      throw new Error('NDK or signer not initialized');
+    }
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 6;
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      await ndk.publish(event);
+      return true;
+    } catch (err) {
+      setError('Failed to repost: ' + err.message);
+      return false;
+    }
+  };
+
+  const commentPost = async (postId: string, pubkey: string, content: string) => {
+    if (!ndk || !ndk.signer) {
+      setError('Please log in to comment');
+      throw new Error('NDK or signer not initialized');
+    }
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 1;
+      event.content = content;
+      event.created_at = Math.floor(Date.now() / 1000);
+      event.tags = [['e', postId, '', 'reply'], ['p', pubkey], ['cluster', 'city1']];
+      await event.sign();
+      await ndk.publish(event);
+      return true;
+    } catch (err) {
+      setError('Failed to comment: ' + err.message);
+      return false;
+    }
+  };
+
+  return { posts: verifiedPosts, createPost, likePost, repostPost, commentPost, error };
+}
+Update PostCard.tsx:
+Add comment functionality, loading states, and error feedback:
+javascript
+// client/src/components/feed/PostCard.tsx
+import { useNodusPosts } from '@/hooks/useNodusPosts';
+import { useState } from 'react';
+
+interface Post {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+export const PostCard = ({ post }: { post: Post }) => {
+  const { likePost, repostPost, commentPost, error } = useNodusPosts();
+  const [isCommenting, setIsCommenting] = useState(false);
+  const [commentContent, setCommentContent] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleLike = async () => {
+    setIsLoading(true);
+    const success = await likePost(post.id, post.pubkey);
+    setIsLoading(false);
+    if (success) alert('Liked!');
+  };
+
+  const handleRepost = async () => {
+    setIsLoading(true);
+    const success = await repostPost(post.id, post.pubkey);
+    setIsLoading(false);
+    if (success) alert('Reposted!');
+  };
+
+  const handleCommentSubmit = async () => {
+    if (!commentContent.trim()) return;
+    setIsLoading(true);
+    const success = await commentPost(post.id, post.pubkey, commentContent);
+    setIsLoading(false);
+    if (success) {
+      setCommentContent('');
+      setIsCommenting(false);
+      alert('Comment posted!');
+    }
+  };
+
+  return (
+    <div>
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+      <p>{post.content}</p>
+      <button onClick={handleLike} disabled={isLoading}>Like</button>
+      <button onClick={handleRepost} disabled={isLoading}>Repost</button>
+      <button onClick={() => setIsCommenting(!isCommenting)}>Comment</button>
+      {isCommenting && (
+        <div>
+          <textarea
+            value={commentContent}
+            onChange={e => setCommentContent(e.target.value)}
+            placeholder="Write a comment..."
+          />
+          <button onClick={handleCommentSubmit} disabled={isLoading}>
+            {isLoading ? 'Sending...' : 'Send'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+Update db.ts:
+Add caching for NIP-05 verification:
+javascript
+// client/src/lib/db.ts
+import { NDK } from '@nostr-dev-kit/ndk';
+
+export class DB {
+  private cache = new Map<string, boolean>();
+
+  async isNip05Verified(pubkey: string, ndk: NDK): Promise<boolean> {
+    if (this.cache.has(pubkey)) return this.cache.get(pubkey)!;
+    try {
+      const user = await ndk.getUser({ pubkey });
+      const verified = !!user.nip05;
+      this.cache.set(pubkey, verified);
+      return verified;
+    } catch (err) {
+      console.error('NIP-05 verification failed:', err);
+      return false;
+    }
+  }
+}
+Test:
+Restart the app in Replit.
+
+Log in with a test private key (or use NIP-07 extension if available).
+
+Try liking, reposting, and commenting on a post. Verify that:
+Likes and reposts publish successfully (check console for EVENT messages).
+
+Comments publish as kind 1 events with e and p tags.
+
+The UI shows loading states and success/error feedback.
+Step 2: Ensure Authentication
+Tasks:
+Update AuthContext.tsx:
+Complete generateNewKeys and integrate with NDKProvider:
+javascript
+// client/src/contexts/AuthContext.tsx
+import { createContext, useState, useEffect } from 'react';
+import { NDK, NDKPrivateKeySigner } from '@nostr-dev-kit/ndk';
+import { generateSecretKey, getPublicKey } from 'nostr-tools';
+
+export const AuthContext = createContext({});
+
+export const AuthProvider = ({ children, ndk }) => {
+  const [user, setUser] = useState(null);
+
+  const loginWithPrivateKey = async (privateKey: string) => {
+    try {
+      const signer = new NDKPrivateKeySigner(privateKey);
+      ndk.signer = signer;
+      const user = await signer.user();
+      setUser(user);
+      localStorage.setItem('nostr_private_key', privateKey);
+      return true;
+    } catch (err) {
+      console.error('Login failed:', err);
+      return false;
+    }
+  };
+
+  const generateNewKeys = async () => {
+    try {
+      const privateKey = generateSecretKey();
+      const publicKey = getPublicKey(privateKey);
+      const signer = new NDKPrivateKeySigner(privateKey);
+      ndk.signer = signer;
+      const user = await signer.user();
+      setUser(user);
+      localStorage.setItem('nostr_private_key', privateKey);
+      return { privateKey, publicKey };
+    } catch (err) {
+      console.error('Key generation failed:', err);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem('nostr_private_key');
+    if (savedKey) loginWithPrivateKey(savedKey);
+  }, []);
+
+  return (
+    <AuthContext.Provider value={{ ndk, user, loginWithPrivateKey, generateNewKeys }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+Integrate with NdkContext.tsx:
+Pass ndk to AuthProvider:
+javascript
+// client/src/App.tsx
+import { NDKProvider } from '@nostr-dev-kit/ndk-react';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { Router } from '@/Router';
+import { WebSocket } from 'ws';
+
+global.WebSocket = WebSocket;
+
+export const App = () => (
+  <NDKProvider relayUrls={[
+    'wss://relay.mynodus.com',
+    'wss://relay.damus.io',
+    'wss://relay.nostr.band',
+    'wss://nos.lol',
+    'wss://nostr.wine'
+  ]}>
+    {({ ndk }) => (
+      <AuthProvider ndk={ndk}>
+        <Router />
+      </AuthProvider>
+    )}
+  </NDKProvider>
+);
+Test:
+Generate a new keypair via generateNewKeys.
+
+Log in and verify that ndk.signer is set.
+
+Ensure likes, reposts, and comments publish without signer errors.
+Step 3: Stabilize Relay Connections
+Tasks:
+Update client/src/lib/ndk.ts:
+Add robust connection logic:
+javascript
+// client/src/lib/ndk.ts
+import { NDK } from '@nostr-dev-kit/ndk';
+import { WebSocket } from 'ws';
+
+global.WebSocket = WebSocket;
+
+export async function connectNDK(ndk: NDK, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await ndk.connect(5000);
+      console.log('NDK connected to relays:', Array.from(ndk.pool.relays.keys()));
+      return true;
+    } catch (error) {
+      console.error(`NDK connection attempt ${i + 1} failed:`, error);
+      if (i === retries - 1) {
+        console.error('Failed to connect NDK');
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+}
+Enhance RelaySettings.tsx:
+Add reconnection logic:
+javascript
+useEffect(() => {
+  if (!ndk) return;
+  const loadRelays = async () => {
+    setIsLoading(true);
+    const relayInfos: RelayInfo[] = [];
+    for (const [url, relay] of ndk.pool.relays) {
+      if (relay.status !== 1) await relay.connect().catch(() => {});
+      relayInfos.push({
+        url,
+        status: relay.status,
+        read: relay.read,
+        write: relay.write,
+        latency: relay.latency || undefined,
+        relay
+      });
+    }
+    setRelays(relayInfos);
+    setIsLoading(false);
+  };
+  loadRelays();
+  const interval = setInterval(loadRelays, 10000);
+  return () => clearInterval(interval);
+}, [ndk]);
+Test:
+Verify all relays connect (check RelaySettings UI).
+
+If connections fail, test relays individually:
+bash
+node -e "const WebSocket = require('ws'); const ws = new WebSocket('wss://relay.mynodus.com'); ws.on('open', () => { console.log('Connected'); ws.close(); }); ws.on('error', e => console.error('Error:', e));"
+Step 4: Resolve TypeScript Errors
+Tasks:
+Fix PostCard.tsx:
+Ensure proper imports and types:
+javascript
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+Run TypeScript Check:
+bash
+npx tsc --noEmit
+
+Fix any errors (e.g., missing types for NDKEvent properties).
+Test:
+Confirm no LSP errors in Replit’s editor.
+Step 5: Implement Basic Clustering
+Tasks:
+Tag Relays:
+In client/src/App.tsx:
+javascript
+useEffect(() => {
+  if (ndk) {
+    ndk.pool.relays.forEach((relay, url) => {
+      relay.metadata = {
+        cluster: url === 'wss://relay.mynodus.com' ? 'city1' : 'neighborhood1',
+        isDoor: ['wss://relay.mynodus.com', 'wss://relay.damus.io'].includes(url)
+      };
+    });
+  }
+}, [ndk]);
+Route Through Door Relays:
+In useNodusPosts.ts:
+javascript
+const publishToDoorRelays = async (event: NDKEvent) => {
+  const doorRelays = Array.from(ndk.pool.relays.values()).filter(r => r.metadata?.isDoor && r.status === 1);
+  if (!doorRelays.length) {
+    setError('No door relays available');
+    return false;
+  }
+  await Promise.all(doorRelays.map(r => r.publish(event)));
+  return true;
+};
+
+const createPost = async (content: string) => {
+  if (!ndk || !ndk.signer) {
+    setError('Please log in to post');
+    throw new Error('NDK or signer not initialized');
+  }
+  try {
+    const event = new NDKEvent(ndk);
+    event.kind = 1;
+    event.content = content;
+    event.created_at = Math.floor(Date.now() / 1000);
+    event.tags = [['cluster', 'city1']];
+    await event.sign();
+    return await publishToDoorRelays(event);
+  } catch (err) {
+    setError('Failed to post: ' + err.message);
+    return false;
+  }
+};
+Test:
+Verify that posts, likes, reposts, and comments publish only to door relays.
+
+Check RelaySettings to confirm cluster metadata.
+

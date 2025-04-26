@@ -8,16 +8,18 @@ class NodusDatabase extends Dexie {
   userFollows: Dexie.Table<{ pubkey: string, follows: string[] }, string>;
   userSettings: Dexie.Table<{ id: number, darkMode: boolean, lastSync: Date }, number>;
   user: Dexie.Table<NostrUser, number>;
+  nip05Cache: Dexie.Table<{ pubkey: string, verified: boolean, timestamp: number }, string>;
 
   constructor() {
     super('NodusDB');
     
-    this.version(1).stores({
+    this.version(2).stores({
       events: 'id, pubkey, kind, created_at, *tags', // Store events with indexes
       profiles: 'pubkey, name', // Store profiles indexed by pubkey
       userFollows: 'pubkey', // Store user follows
       userSettings: 'id', // Store user settings
-      user: '++id, publicKey, npub' // Store user info
+      user: '++id, publicKey, npub', // Store user info
+      nip05Cache: 'pubkey, timestamp' // Store NIP-05 verification cache
     });
     
     this.events = this.table('events');
@@ -25,6 +27,7 @@ class NodusDatabase extends Dexie {
     this.userFollows = this.table('userFollows');
     this.userSettings = this.table('userSettings');
     this.user = this.table('user');
+    this.nip05Cache = this.table('nip05Cache');
   }
 
   // Helper methods for common operations

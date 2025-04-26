@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { NDKEvent, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { useNdk } from '../contexts/NdkContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,6 +13,7 @@ export function useNodusPosts(limit: number = 50) {
   const [posts, setPosts] = useState<NostrEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [verifiedPosts, setVerifiedPosts] = useState<NostrEvent[]>([]);
   
   // Filter for text notes (posts)
   // We'll filter for NIP-05 verified users
@@ -43,6 +44,7 @@ export function useNodusPosts(limit: number = 50) {
       })
       .catch((err: Error) => {
         logger.error('Error loading posts from database', err);
+        setError('Failed to load posts from database: ' + err.message);
       });
     
     // Create subscription
@@ -51,17 +53,17 @@ export function useNodusPosts(limit: number = 50) {
     
     // Handle events as they come in
     subscription.on('event', async (ndkEvent: NDKEvent) => {
-      const event = convertNDKEventToNostrEvent(ndkEvent);
-      
-      // Check for verified users (has NIP-05)
       try {
+        const event = convertNDKEventToNostrEvent(ndkEvent);
+        
+        // Check for verified users (has NIP-05)
         // Get profile for author if we don't already have it
-        const ndkUser = ndk.getUser({ pubkey: event.pubkey });
-        await ndkUser.fetchProfile();
+        const user = ndk.getUser({ pubkey: event.pubkey });
+        await user.fetchProfile();
         
         // Only allow posts from users with NIP-05 verification
-        if (ndkUser.profile?.nip05) {
-          logger.info(`Accepted post from verified user: ${ndkUser.profile.nip05}`);
+        if (user.profile?.nip05) {
+          logger.info(`Accepted post from verified user: ${user.profile.nip05}`);
           events.push(event);
           
           // Store in database
@@ -69,14 +71,21 @@ export function useNodusPosts(limit: number = 50) {
             logger.error('Error storing event in database', err);
           });
           
+          // Add cluster tag for Matryoshka testing
+          if (!event.tags.some(tag => tag[0] === 'cluster')) {
+            event.tags.push(['cluster', 'city1']);
+          }
+          
           // Sort and update state
           const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
           setPosts(sortedEvents);
+          setVerifiedPosts(sortedEvents);
         } else {
           logger.info(`Skipped post from unverified user: ${event.pubkey}`);
         }
       } catch (err) {
-        logger.error('Error fetching user profile for verification', err);
+        logger.error('Error processing event', err);
+        setError('Error processing event: ' + (err as Error).message);
       }
     });
     
@@ -93,6 +102,35 @@ export function useNodusPosts(limit: number = 50) {
     };
   }, [ndk, limit]);
   
+  // Function to publish to door relays for Matryoshka implementation
+  const publishToDoorRelays = async (event: NDKEvent) => {
+    try {
+      if (!ndk || !ndk.pool) {
+        setError('NDK pool not initialized');
+        return false;
+      }
+      
+      // Find door relays among connected relays
+      const doorRelays = Array.from(ndk.pool.relays.values()).filter(relay => 
+        relay.url === 'wss://relay.mynodus.com' || 
+        relay.url === 'wss://relay.damus.io'
+      );
+      
+      if (doorRelays.length === 0) {
+        logger.error('No door relays available');
+        setError('No door relays available');
+        return false;
+      }
+      
+      // Publish to door relays
+      await Promise.all(doorRelays.map(relay => relay.publish(event)));
+      return true;
+    } catch (err) {
+      logger.error('Error publishing to door relays', err);
+      return false;
+    }
+  };
+
   // Function to create a new post
   const createPost = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
     if (!ndk) {
@@ -110,9 +148,23 @@ export function useNodusPosts(limit: number = 50) {
       const event = new NDKEvent(ndk);
       event.kind = EventKind.TEXT_NOTE;
       event.content = content;
-      event.tags = tags;
+      event.created_at = Math.floor(Date.now() / 1000);
       
-      await event.publish();
+      // Add cluster tag for Matryoshka testing
+      const updatedTags = [...tags];
+      if (!updatedTags.some(tag => tag[0] === 'cluster')) {
+        updatedTags.push(['cluster', 'city1']);
+      }
+      event.tags = updatedTags;
+      
+      await event.sign();
+      
+      // Try publishing to door relays first
+      const doorPublishSuccess = await publishToDoorRelays(event);
+      if (!doorPublishSuccess) {
+        // Fall back to regular publish
+        await event.publish();
+      }
       
       const newPost = convertNDKEventToNostrEvent(event);
       
@@ -125,7 +177,7 @@ export function useNodusPosts(limit: number = 50) {
       return newPost;
     } catch (err: any) {
       logger.error('Error creating post', err);
-      setError('Failed to create post');
+      setError('Failed to create post: ' + err.message);
       return null;
     }
   };
@@ -149,12 +201,21 @@ export function useNodusPosts(limit: number = 50) {
       const event = new NDKEvent(ndk);
       event.kind = EventKind.REACTION;
       event.content = '+'; // "+" is a like in Nostr
+      event.created_at = Math.floor(Date.now() / 1000);
       event.tags = [
         ['e', postId], // The event being reacted to
-        ['p', postPubkey] // The author of the original event
+        ['p', postPubkey], // The author of the original event
+        ['cluster', 'city1'] // Add cluster tag for Matryoshka
       ];
       
-      await event.publish();
+      await event.sign();
+      
+      // Try publishing to door relays first
+      const doorPublishSuccess = await publishToDoorRelays(event);
+      if (!doorPublishSuccess) {
+        // Fall back to regular publish
+        await event.publish();
+      }
       
       logger.info('Successfully liked post');
       
@@ -166,7 +227,7 @@ export function useNodusPosts(limit: number = 50) {
       return reaction;
     } catch (err) {
       logger.error('Error liking post', err);
-      setError('Failed to like post');
+      setError('Failed to like post: ' + (err as Error).message);
       return null;
     }
   };
@@ -190,12 +251,21 @@ export function useNodusPosts(limit: number = 50) {
       const event = new NDKEvent(ndk);
       event.kind = EventKind.REPOST;
       event.content = ''; // Repost events typically have empty content
+      event.created_at = Math.floor(Date.now() / 1000);
       event.tags = [
         ['e', postId], // The event being reposted
-        ['p', postPubkey] // The author of the original event
+        ['p', postPubkey], // The author of the original event
+        ['cluster', 'city1'] // Add cluster tag for Matryoshka
       ];
       
-      await event.publish();
+      await event.sign();
+      
+      // Try publishing to door relays first
+      const doorPublishSuccess = await publishToDoorRelays(event);
+      if (!doorPublishSuccess) {
+        // Fall back to regular publish
+        await event.publish();
+      }
       
       logger.info('Successfully reposted');
       
@@ -207,12 +277,12 @@ export function useNodusPosts(limit: number = 50) {
       return repost;
     } catch (err) {
       logger.error('Error reposting', err);
-      setError('Failed to repost');
+      setError('Failed to repost: ' + (err as Error).message);
       return null;
     }
   };
   
-  // Function to reply to a post
+  // Function to reply to a post (comment)
   const replyToPost = async (
     postId: string, 
     postPubkey: string, 
@@ -237,11 +307,13 @@ export function useNodusPosts(limit: number = 50) {
       const event = new NDKEvent(ndk);
       event.kind = EventKind.TEXT_NOTE;
       event.content = content;
+      event.created_at = Math.floor(Date.now() / 1000);
       
       // Start with basic tags for the direct parent
       const tags = [
         ['e', postId, '', 'reply'], // The event being replied to
-        ['p', postPubkey] // The author of that event
+        ['p', postPubkey], // The author of that event
+        ['cluster', 'city1'] // Add cluster tag for Matryoshka
       ];
       
       // Add root tag if this is a reply to a reply (thread)
@@ -252,7 +324,14 @@ export function useNodusPosts(limit: number = 50) {
       // Add any additional tags
       event.tags = [...tags, ...additionalTags];
       
-      await event.publish();
+      await event.sign();
+      
+      // Try publishing to door relays first
+      const doorPublishSuccess = await publishToDoorRelays(event);
+      if (!doorPublishSuccess) {
+        // Fall back to regular publish
+        await event.publish();
+      }
       
       logger.info('Successfully replied to post');
       
@@ -264,19 +343,21 @@ export function useNodusPosts(limit: number = 50) {
       return reply;
     } catch (err) {
       logger.error('Error replying to post', err);
-      setError('Failed to send reply');
+      setError('Failed to send reply: ' + (err as Error).message);
       return null;
     }
   };
   
   return {
     posts,
+    verifiedPosts,
     isLoading,
     error,
     createPost,
     likePost,
     repostPost,
     replyToPost,
+    commentPost: replyToPost, // Alias for replyToPost for more intuitive naming
     isAuthenticated: !!ndk?.signer
   };
 }
