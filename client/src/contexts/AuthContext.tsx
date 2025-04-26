@@ -1,9 +1,10 @@
 import { createContext, useState, useEffect, useContext } from 'react';
-import { NDKPrivateKeySigner } from '@nostr-dev-kit/ndk';
-import type { NDK, NDKUser } from '@nostr-dev-kit/ndk';
+import NDK, { NDKPrivateKeySigner } from '@nostr-dev-kit/ndk';
+import type { NDKUser } from '@nostr-dev-kit/ndk';
 import * as nostrTools from 'nostr-tools';
 import { useToast } from '@/hooks/use-toast';
 import { db } from '@/lib/db';
+import { useNdk } from '@/contexts/NdkContext';
 
 // Define the NostrUser interface if it's not imported
 interface NostrUser {
@@ -16,6 +17,7 @@ interface NostrUser {
 interface AuthContextType {
   user: NostrUser | null;
   isLoading: boolean;
+  isAuthenticated: boolean;
   login: (nsecOrPrivKey: string) => Promise<boolean>;
   generateNewKeys: () => Promise<NostrUser>;
   logout: () => void;
@@ -26,6 +28,7 @@ interface AuthContextType {
 export const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: false,
+  isAuthenticated: false,
   login: async () => false,
   generateNewKeys: async () => ({ publicKey: '', npub: '', privateKey: '', nsec: '' }),
   logout: () => {},
@@ -35,7 +38,8 @@ export const AuthContext = createContext<AuthContextType>({
 
 export const useAuth = () => useContext(AuthContext);
 
-export const AuthProvider = ({ children, ndk }: { children: React.ReactNode; ndk: NDK }) => {
+export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+  const { ndk } = useNdk();
   const [user, setUser] = useState<NostrUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -218,11 +222,15 @@ export const AuthProvider = ({ children, ndk }: { children: React.ReactNode; ndk
     });
   };
 
+  // Derive authentication state from user
+  const isAuthenticated = !!user;
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
+        isAuthenticated,
         login,
         generateNewKeys,
         logout,

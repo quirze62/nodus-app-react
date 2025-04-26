@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { NdkProvider } from "@/contexts/NdkContext";
+import { NdkProvider, useNdk } from "@/contexts/NdkContext";
 import Header from "@/components/layout/Header";
 import Sidebar from "@/components/layout/Sidebar";
 import MobileNavigation from "@/components/layout/MobileNavigation";
@@ -16,6 +16,7 @@ import Profile from "@/pages/Profile";
 import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import { queryClient } from "./lib/queryClient";
+import NDK from '@nostr-dev-kit/ndk';
 
 
 function MainLayout({ children }: { children: React.ReactNode }) {
