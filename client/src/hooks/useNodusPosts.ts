@@ -200,6 +200,9 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
   // Function to apply filters to posts
   const applyFilters = (posts: NostrEvent[]): NostrEvent[] => {
     if (!posts || posts.length === 0) return [];
+
+    // Determine which filter mode to use (from hook parameter or filters object)
+    const effectiveFilterMode = filters.filterMode || filterMode;
     
     // Apply filters based on the filterMode parameter too
     return posts.filter(post => {
@@ -235,9 +238,9 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
       }
       
       // Now check the specific filterMode passed to the hook
-      if (filterMode !== 'all') {
+      if (effectiveFilterMode !== 'all') {
         // If we're using a specific filter mode, apply that filter
-        switch (filterMode) {
+        switch (effectiveFilterMode) {
           case 'followers':
             // Show posts from users who follow the current user
             return authUser && post.pubkey && followersList.includes(post.pubkey);
@@ -246,7 +249,7 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
             // Show posts from users the current user follows
             return authUser && post.pubkey && followingList.includes(post.pubkey);
             
-          case 'trendy':
+          case 'trending':
             // Show posts with high engagement or multiple tags
             const hasManyReactions = post.pubkey && usersWithReactions[post.pubkey] && usersWithReactions[post.pubkey] > 1;
             const hasMultipleTags = post.tags.filter(tag => tag[0] === 't' || tag[0] === 'p').length > 2;

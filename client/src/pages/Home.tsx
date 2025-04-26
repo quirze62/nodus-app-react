@@ -57,7 +57,7 @@ export default function Home() {
         <ComposePost />
         
         <FeedFiltersBar 
-          filters={filters} 
+          filters={{...filters, filterMode}} 
           onFiltersChange={handleFilterChange} 
         />
         
