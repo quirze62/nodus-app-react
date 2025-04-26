@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { useNdk } from '@/contexts/NdkContext';
 import { useToast } from '@/hooks/use-toast';
 import { extractHashtags } from '@/lib/utils';
 
-export default function ComposePost() {
+interface ComposePostProps {
+  onSubmit?: (content: string, tags?: string[][]) => Promise<any>;
+}
+
+export default function ComposePost({ onSubmit }: ComposePostProps) {
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { publishNote } = useNdk();
   const { toast } = useToast();
 
   const handleSubmit = async () => {
@@ -21,6 +23,15 @@ export default function ComposePost() {
       return;
     }
 
+    if (!onSubmit) {
+      toast({
+        title: "Error",
+        description: "Posting functionality is not available.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     
     try {
@@ -28,9 +39,9 @@ export default function ComposePost() {
       const hashtags = extractHashtags(content);
       const tags = hashtags.map(tag => ['t', tag]);
       
-      const note = await publishNote(content, tags);
+      const result = await onSubmit(content, tags);
       
-      if (note) {
+      if (result) {
         toast({
           title: "Success",
           description: "Your post has been published!"
