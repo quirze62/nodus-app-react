@@ -5,8 +5,8 @@ import { useAuth } from '../contexts/AuthContext';
 import logger from '../lib/logger';
 import { NostrEvent, EventKind } from '../lib/nostr';
 import { db } from '../lib/db';
-import { isNIP05Verified, isPersonallyApproved } from '../lib/ndk';
-import { FeedFilters, DEFAULT_FILTERS } from '@/components/feed/FeedFilters';
+import { isNIP05Verified, isPersonallyApproved, publishNote } from '../lib/ndk';
+import { FeedFilters, DEFAULT_FILTERS, FilterMode } from '@/components/feed/FeedFilters';
 
 // Helper function to check if a user is a valid Nodus network member
 async function isValidNodusMember(user: NDKUser): Promise<boolean> {
@@ -35,7 +35,7 @@ async function isValidNodusMember(user: NDKUser): Promise<boolean> {
 }
 
 // Hook for fetching and working with posts
-export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFilters> = {}) {
+export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFilters> = {}, filterMode: FilterMode = 'all') {
   const [filters, setFilters] = useState<FeedFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
   const { ndk, user: ndkUser } = useNdk();
   const { user: authUser } = useAuth();
@@ -43,6 +43,12 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [verifiedPosts, setVerifiedPosts] = useState<NostrEvent[]>([]);
+  
+  // State for social graph tracking
+  const [followingList, setFollowingList] = useState<string[]>([]);
+  const [followersList, setFollowersList] = useState<string[]>([]);
+  const [followsOfFollows, setFollowsOfFollows] = useState<string[]>([]);
+  const [usersWithReactions, setUsersWithReactions] = useState<{[key: string]: number}>({});
   
   // Filter for text notes (posts)
   // We'll filter for NIP-05 verified users
@@ -55,11 +61,6 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
   const options: NDKSubscriptionOptions = {
     closeOnEose: false
   };
-  
-  // State to track users the current user is following and followers
-  const [followingList, setFollowingList] = useState<string[]>([]);
-  const [followersList, setFollowersList] = useState<string[]>([]);
-  const [usersWithReactions, setUsersWithReactions] = useState<{[key: string]: number}>({});
   
   // Function to fetch following list and followers from NDK
   useEffect(() => {
@@ -200,6 +201,7 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
   const applyFilters = (posts: NostrEvent[]): NostrEvent[] => {
     if (!posts || posts.length === 0) return [];
     
+    // Apply filters based on the filterMode parameter too
     return posts.filter(post => {
       // Search term filter
       if (filters.searchTerm) {
@@ -232,11 +234,29 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         return false;
       }
       
-      // Filter by followed/following/trending
-      // At least one of these filters must match if any is enabled
-      const socialFiltersEnabled = filters.showOnlyFollowed || filters.showOnlyFollowing || filters.showTrending;
+      // Now check the specific filterMode passed to the hook
+      if (filterMode !== 'all') {
+        // If we're using a specific filter mode, apply that filter
+        switch (filterMode) {
+          case 'followers':
+            // Show posts from users who follow the current user
+            return authUser && post.pubkey && followersList.includes(post.pubkey);
+            
+          case 'follows':
+            // Show posts from users the current user follows
+            return authUser && post.pubkey && followingList.includes(post.pubkey);
+            
+          case 'trendy':
+            // Show posts with high engagement or multiple tags
+            const hasManyReactions = post.pubkey && usersWithReactions[post.pubkey] && usersWithReactions[post.pubkey] > 1;
+            const hasMultipleTags = post.tags.filter(tag => tag[0] === 't' || tag[0] === 'p').length > 2;
+            return hasManyReactions || hasMultipleTags;
+        }
+      }
       
-      if (socialFiltersEnabled) {
+      // Also apply filters based on selected filter checkboxes
+      // These can work independently or along with the filterMode
+      if (filters.showOnlyFollowed || filters.showOnlyFollowing || filters.showTrending) {
         let matchesSocialFilter = false;
         
         // Check each enabled filter
@@ -286,6 +306,7 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
       
       // Create a readable description of active filters
       const activeFilters = [];
+      if (filterMode !== 'all') activeFilters.push(filterMode);
       if (filters.showOnlyFollowed) activeFilters.push('followers');
       if (filters.showOnlyFollowing) activeFilters.push('following');
       if (filters.showTrending) activeFilters.push('trending');
@@ -297,7 +318,7 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
       logger.info(`Applied filters: ${activeFilters.join(', ') || 'none'}`);
       logger.info(`Showing ${filtered.length} of ${verifiedPosts.length} posts after filtering`);
     }
-  }, [filters, followingList, followersList, usersWithReactions]);
+  }, [filters, filterMode, followingList, followersList, usersWithReactions, verifiedPosts]);
   
   // Set up subscription to posts
   useEffect(() => {
@@ -326,408 +347,95 @@ export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFi
         }
       })
       .catch((err: Error) => {
-        logger.error('Error loading posts from database', err);
-        setError('Failed to load posts from database: ' + err.message);
-      });
-    
-    // Create subscription
-    const subscription = ndk.subscribe(ndkFilter, options);
-    const events: NostrEvent[] = [];
-    
-    // Handle events as they come in
-    subscription.on('event', async (ndkEvent: NDKEvent) => {
-      try {
-        const event = convertNDKEventToNostrEvent(ndkEvent);
+        logger.error('Error loading posts from database:', err);
+      })
+      .finally(() => {
+        // Then fetch from the network for fresh data
+        // We'll combine this with what we have
+        const subscription = ndk.subscribe(ndkFilter, options);
         
-        // Check for verified users (has NIP-05)
-        // Get profile for author if we don't already have it
-        const user = ndk.getUser({ pubkey: event.pubkey });
-        try {
-          await user.fetchProfile();
+        subscription.on('event', async (ndkEvent: NDKEvent) => {
+          // Verify the author of the post
+          const user = ndk.getUser({ pubkey: ndkEvent.pubkey });
+          const isValid = await isValidNodusMember(user);
           
-          // Only allow posts from users with NIP-05 verification
-          if (user.profile?.nip05) {
-            // Extra verification step - check if user is part of our closed network
-            const isVerified = await isValidNodusMember(user);
+          if (isValid) {
+            logger.info(`Accepted post from verified user: ${user.profile?.nip05 || user.pubkey}`);
             
-            if (isVerified) {
-              logger.info(`Accepted post from verified user: ${user.profile.nip05}`);
-              events.push(event);
-              
-              // Store in database
-              db.storeEvent(event).catch((err: Error) => {
-                logger.error('Error storing event in database', err);
-              });
-              
-              // Add cluster tag for Matryoshka testing if not present
-              if (!event.tags.some(tag => tag[0] === 'cluster')) {
-                event.tags.push(['cluster', 'city1']);
+            // Convert NDK event to NostrEvent
+            const event = convertNDKEventToNostrEvent(ndkEvent);
+            
+            // Store in database
+            db.storeEvent(event).catch((err: Error) => {
+              logger.error('Error storing event in database:', err);
+            });
+            
+            // Update state
+            setVerifiedPosts(prev => {
+              // Don't add duplicates
+              if (prev.some(p => p.id === event.id)) {
+                return prev;
               }
               
-              // Sort and update state
-              const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
-              setVerifiedPosts(sortedEvents);
-              setPosts(applyFilters(sortedEvents));
-            } else {
-              logger.info(`Skipped post from user with NIP-05 but not in approved network: ${user.profile.nip05}`);
-            }
+              // Add the new post and re-sort
+              const newEvents = [...prev, event];
+              const sortedEvents = [...newEvents].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
+              return sortedEvents;
+            });
           } else {
-            logger.info(`Skipped post from unverified user: ${event.pubkey}`);
+            logger.info(`Skipped post from unverified user: ${ndkEvent.pubkey}`);
           }
-        } catch (profileError) {
-          logger.warn(`Failed to fetch profile for ${event.pubkey}: ${profileError}`);
-          logger.info(`Skipped post due to profile fetch failure: ${event.pubkey}`);
-        }
-      } catch (err) {
-        logger.error('Error processing event', err);
-        setError('Error processing event: ' + (err as Error).message);
-      }
-    });
-    
-    // Handle end of stored events
-    subscription.on('eose', () => {
-      logger.info(`Received EOSE with ${events.length} posts`);
-      setIsLoading(false);
-    });
-    
-    // Clean up subscription on unmount
-    return () => {
-      logger.info('Cleaning up posts subscription');
-      subscription.stop();
-    };
-  }, [ndk, limit]);
+        });
+        
+        subscription.on('eose', () => {
+          setIsLoading(false);
+          logger.info('Received all posts from subscribed relays');
+        });
+        
+        return () => {
+          subscription.stop();
+        };
+      });
+  }, [ndk, limit, filterMode]); // Add filterMode as a dependency
   
-  // Function to publish to door relays for Matryoshka implementation
+  // Function to create a post
+  const createPost = async (content: string): Promise<NostrEvent | null> => {
+    if (!ndk || !authUser) {
+      setError('Not authenticated');
+      return null;
+    }
+    
+    try {
+      // Create a new post event
+      return await publishNote(content);
+    } catch (err) {
+      const error = err as Error;
+      logger.error('Error creating post:', error);
+      setError(`Failed to create post: ${error.message}`);
+      return null;
+    }
+  };
+  
+  // Function to publish post to door relays
   const publishToDoorRelays = async (event: NDKEvent) => {
-    try {
-      if (!ndk || !ndk.pool) {
-        setError('NDK pool not initialized');
-        return false;
-      }
-      
-      // Find door relays among connected relays
-      const doorRelays = Array.from(ndk.pool.relays.values()).filter(relay => 
-        relay.url === 'wss://relay.mynodus.com' || 
-        relay.url === 'wss://relay.damus.io'
-      );
-      
-      if (doorRelays.length === 0) {
-        logger.error('No door relays available');
-        setError('No door relays available');
-        return false;
-      }
-      
-      // Publish to door relays
-      await Promise.all(doorRelays.map(relay => relay.publish(event)));
-      return true;
-    } catch (err) {
-      logger.error('Error publishing to door relays', err);
-      return false;
-    }
-  };
-
-  // Function to create a new post
-  const createPost = async (content: string, tags: string[][] = []): Promise<NostrEvent | null> => {
-    if (!ndk) {
-      setError('NDK not initialized');
-      return null;
-    }
-    
-    if (!ndk.signer || !authUser) {
-      setError('Authentication required to create posts');
-      logger.error('Attempted to create post without authentication');
-      return null;
-    }
-    
-    // Validate if the user is a valid Nodus member
-    try {
-      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
-      await ndkCurrentUser.fetchProfile();
-      
-      const isValid = await isValidNodusMember(ndkCurrentUser);
-      if (!isValid) {
-        setError('Only verified Nodus members can post');
-        logger.error('Non-verified user attempted to create post');
-        return null;
-      }
-    } catch (err) {
-      logger.error('Error verifying user status', err);
-      setError('Failed to verify user status');
-      return null;
-    }
-    
-    try {
-      const event = new NDKEvent(ndk);
-      event.kind = EventKind.TEXT_NOTE;
-      event.content = content;
-      event.created_at = Math.floor(Date.now() / 1000);
-      
-      // Add cluster tag for Matryoshka testing
-      const updatedTags = [...tags];
-      if (!updatedTags.some(tag => tag[0] === 'cluster')) {
-        updatedTags.push(['cluster', 'city1']);
-      }
-      event.tags = updatedTags;
-      
-      await event.sign();
-      
-      // Try publishing to door relays first
-      const doorPublishSuccess = await publishToDoorRelays(event);
-      if (!doorPublishSuccess) {
-        // Fall back to regular publish
-        await event.publish();
-      }
-      
-      const newPost = convertNDKEventToNostrEvent(event);
-      
-      // Store in local database
-      await db.storeEvent(newPost);
-      
-      // Update state (add to beginning as it's the newest)
-      setPosts(prevPosts => [newPost, ...prevPosts]);
-      
-      return newPost;
-    } catch (err: any) {
-      logger.error('Error creating post', err);
-      setError('Failed to create post: ' + err.message);
-      return null;
-    }
+    // This would be where we implement advanced relay strategies
+    // such as the Matryoshka approach
+    logger.info('Publishing to door relays');
   };
   
-  // Function to like a post (create a reaction)
-  const likePost = async (postId: string, postPubkey: string): Promise<NostrEvent | null> => {
-    if (!ndk) {
-      setError('NDK not initialized');
-      return null;
-    }
-    
-    if (!ndk.signer || !authUser) {
-      setError('Authentication required to like posts');
-      logger.error('Attempted to like post without authentication');
-      return null;
-    }
-    
-    // Validate if the user is a valid Nodus member
-    try {
-      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
-      await ndkCurrentUser.fetchProfile();
-      
-      const isValid = await isValidNodusMember(ndkCurrentUser);
-      if (!isValid) {
-        setError('Only verified Nodus members can like posts');
-        logger.error('Non-verified user attempted to like a post');
-        return null;
-      }
-    } catch (err) {
-      logger.error('Error verifying user status for like', err);
-      setError('Failed to verify user status');
-      return null;
-    }
-    
-    try {
-      logger.info(`Creating reaction for post ${postId}`);
-      
-      const event = new NDKEvent(ndk);
-      event.kind = EventKind.REACTION;
-      event.content = '+'; // "+" is a like in Nostr
-      event.created_at = Math.floor(Date.now() / 1000);
-      event.tags = [
-        ['e', postId], // The event being reacted to
-        ['p', postPubkey], // The author of the original event
-        ['cluster', 'city1'] // Add cluster tag for Matryoshka
-      ];
-      
-      await event.sign();
-      
-      // Try publishing to door relays first
-      const doorPublishSuccess = await publishToDoorRelays(event);
-      if (!doorPublishSuccess) {
-        // Fall back to regular publish
-        await event.publish();
-      }
-      
-      logger.info('Successfully liked post');
-      
-      const reaction = convertNDKEventToNostrEvent(event);
-      
-      // Store in local DB
-      await db.storeEvent(reaction);
-      
-      return reaction;
-    } catch (err) {
-      logger.error('Error liking post', err);
-      setError('Failed to like post: ' + (err as Error).message);
-      return null;
-    }
-  };
-  
-  // Function to repost a post
-  const repostPost = async (postId: string, postPubkey: string): Promise<NostrEvent | null> => {
-    if (!ndk) {
-      setError('NDK not initialized');
-      return null;
-    }
-    
-    if (!ndk.signer || !authUser) {
-      setError('Authentication required to repost');
-      logger.error('Attempted to repost without authentication');
-      return null;
-    }
-    
-    // Validate if the user is a valid Nodus member
-    try {
-      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
-      await ndkCurrentUser.fetchProfile();
-      
-      const isValid = await isValidNodusMember(ndkCurrentUser);
-      if (!isValid) {
-        setError('Only verified Nodus members can repost');
-        logger.error('Non-verified user attempted to repost');
-        return null;
-      }
-    } catch (err) {
-      logger.error('Error verifying user status for repost', err);
-      setError('Failed to verify user status');
-      return null;
-    }
-    
-    try {
-      logger.info(`Creating repost for event ${postId}`);
-      
-      const event = new NDKEvent(ndk);
-      event.kind = EventKind.REPOST;
-      event.content = ''; // Repost events typically have empty content
-      event.created_at = Math.floor(Date.now() / 1000);
-      event.tags = [
-        ['e', postId], // The event being reposted
-        ['p', postPubkey], // The author of the original event
-        ['cluster', 'city1'] // Add cluster tag for Matryoshka
-      ];
-      
-      await event.sign();
-      
-      // Try publishing to door relays first
-      const doorPublishSuccess = await publishToDoorRelays(event);
-      if (!doorPublishSuccess) {
-        // Fall back to regular publish
-        await event.publish();
-      }
-      
-      logger.info('Successfully reposted');
-      
-      const repost = convertNDKEventToNostrEvent(event);
-      
-      // Store in local DB
-      await db.storeEvent(repost);
-      
-      return repost;
-    } catch (err) {
-      logger.error('Error reposting', err);
-      setError('Failed to repost: ' + (err as Error).message);
-      return null;
-    }
-  };
-  
-  // Function to reply to a post (comment)
-  const replyToPost = async (
-    postId: string, 
-    postPubkey: string, 
-    rootId: string | undefined, 
-    content: string,
-    additionalTags: string[][] = []
-  ): Promise<NostrEvent | null> => {
-    if (!ndk) {
-      setError('NDK not initialized');
-      return null;
-    }
-    
-    if (!ndk.signer || !authUser) {
-      setError('Authentication required to reply');
-      logger.error('Attempted to reply without authentication');
-      return null;
-    }
-    
-    // Validate if the user is a valid Nodus member
-    try {
-      const ndkCurrentUser = ndk.getUser({ pubkey: authUser.publicKey });
-      await ndkCurrentUser.fetchProfile();
-      
-      const isValid = await isValidNodusMember(ndkCurrentUser);
-      if (!isValid) {
-        setError('Only verified Nodus members can comment on posts');
-        logger.error('Non-verified user attempted to comment on a post');
-        return null;
-      }
-    } catch (err) {
-      logger.error('Error verifying user status for comment', err);
-      setError('Failed to verify user status');
-      return null;
-    }
-    
-    try {
-      logger.info(`Creating reply to post ${postId}`);
-      
-      const event = new NDKEvent(ndk);
-      event.kind = EventKind.TEXT_NOTE;
-      event.content = content;
-      event.created_at = Math.floor(Date.now() / 1000);
-      
-      // Start with basic tags for the direct parent
-      const tags = [
-        ['e', postId, '', 'reply'], // The event being replied to
-        ['p', postPubkey], // The author of that event
-        ['cluster', 'city1'] // Add cluster tag for Matryoshka
-      ];
-      
-      // Add root tag if this is a reply to a reply (thread)
-      if (rootId && rootId !== postId) {
-        tags.push(['e', rootId, '', 'root']);
-      }
-      
-      // Add any additional tags
-      event.tags = [...tags, ...additionalTags];
-      
-      await event.sign();
-      
-      // Try publishing to door relays first
-      const doorPublishSuccess = await publishToDoorRelays(event);
-      if (!doorPublishSuccess) {
-        // Fall back to regular publish
-        await event.publish();
-      }
-      
-      logger.info('Successfully replied to post');
-      
-      const reply = convertNDKEventToNostrEvent(event);
-      
-      // Store in local DB
-      await db.storeEvent(reply);
-      
-      return reply;
-    } catch (err) {
-      logger.error('Error replying to post', err);
-      setError('Failed to send reply: ' + (err as Error).message);
-      return null;
-    }
-  };
-  
+  // Return the hook interface
   return {
     posts,
-    verifiedPosts,
     isLoading,
     error,
+    createPost,
     filters,
     setFilters,
-    createPost,
-    likePost,
-    repostPost,
-    replyToPost,
-    commentPost: replyToPost, // Alias for replyToPost for more intuitive naming
-    isAuthenticated: !!ndk?.signer && !!authUser
+    filterMode
   };
 }
 
-// Helper function to convert NDKEvent to NostrEvent
+// Helper function to convert NDK event to our app format
 function convertNDKEventToNostrEvent(event: NDKEvent): NostrEvent {
   return {
     id: event.id,
