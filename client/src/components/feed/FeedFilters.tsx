@@ -7,6 +7,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 
+export type FilterMode = 'all' | 'followers' | 'follows' | 'trending';
+
 export interface FeedFilters {
   searchTerm: string;
   showOnlyVerified: boolean;
@@ -16,6 +18,7 @@ export interface FeedFilters {
   includeReposts: boolean;
   includeMentions: boolean;
   tags: string[];
+  filterMode: FilterMode;
 }
 
 export const DEFAULT_FILTERS: FeedFilters = {
@@ -26,7 +29,8 @@ export const DEFAULT_FILTERS: FeedFilters = {
   showTrending: false,
   includeReposts: true,
   includeMentions: true,
-  tags: []
+  tags: [],
+  filterMode: 'all'
 };
 
 interface FeedFiltersProps {
@@ -110,6 +114,28 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
           />
         </div>
         
+        {/* Filter Mode Selector Dropdown */}
+        <select 
+          className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md text-sm font-medium"
+          value={filters.filterMode}
+          onChange={(e) => {
+            const newMode = e.target.value as FilterMode;
+            onFiltersChange({
+              ...filters,
+              filterMode: newMode,
+              // Also update the checkboxes to match the selected mode
+              showOnlyFollowed: newMode === 'followers',
+              showOnlyFollowing: newMode === 'follows',
+              showTrending: newMode === 'trending'
+            });
+          }}
+        >
+          <option value="all">All Posts</option>
+          <option value="followers">Followers</option>
+          <option value="follows">Following</option>
+          <option value="trending">Trending</option>
+        </select>
+        
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" size="icon" className="bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100 hover:text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800 dark:hover:bg-blue-900/50">
@@ -121,15 +147,44 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
               <h3 className="font-medium text-blue-600 dark:text-blue-400">Filter Options</h3>
               
               <div className="space-y-2">
-                <h4 className="text-sm font-medium mb-2">View Mode</h4>
+                <h4 className="text-sm font-medium mb-2">Feed Filter Mode</h4>
+                <div className="ml-2 space-y-1">
+                  <select
+                    className="w-full px-2 py-1 border rounded-md"
+                    value={filters.filterMode}
+                    onChange={(e) => {
+                      const newMode = e.target.value as FilterMode;
+                      onFiltersChange({
+                        ...filters,
+                        filterMode: newMode,
+                        // Also update the checkboxes to match the selected mode
+                        showOnlyFollowed: newMode === 'followers',
+                        showOnlyFollowing: newMode === 'follows',
+                        showTrending: newMode === 'trending'
+                      });
+                    }}
+                  >
+                    <option value="all">All Posts</option>
+                    <option value="followers">Followers</option>
+                    <option value="follows">Following</option>
+                    <option value="trending">Trending</option>
+                  </select>
+                </div>
+                
+                <h4 className="text-sm font-medium mb-2 mt-4">View Mode</h4>
                 <div className="ml-2 space-y-2">
                   <div className="flex items-center space-x-2">
                     <Checkbox 
                       id="followed" 
                       checked={filters.showOnlyFollowed}
                       onCheckedChange={() => {
-                        // Just toggle this filter without affecting others
-                        toggleFilter('showOnlyFollowed');
+                        // Also update the filter mode if this is checked
+                        const showOnlyFollowed = !filters.showOnlyFollowed;
+                        onFiltersChange({
+                          ...filters,
+                          showOnlyFollowed,
+                          filterMode: showOnlyFollowed ? 'followers' : filters.filterMode === 'followers' ? 'all' : filters.filterMode
+                        });
                       }}
                     />
                     <Label htmlFor="followed" className="flex items-center gap-2">
@@ -143,8 +198,13 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                       id="following" 
                       checked={filters.showOnlyFollowing}
                       onCheckedChange={() => {
-                        // Just toggle this filter without affecting others
-                        toggleFilter('showOnlyFollowing');
+                        // Also update the filter mode if this is checked
+                        const showOnlyFollowing = !filters.showOnlyFollowing;
+                        onFiltersChange({
+                          ...filters,
+                          showOnlyFollowing,
+                          filterMode: showOnlyFollowing ? 'follows' : filters.filterMode === 'follows' ? 'all' : filters.filterMode
+                        });
                       }}
                     />
                     <Label htmlFor="following" className="flex items-center gap-2">
@@ -158,8 +218,13 @@ export function FeedFiltersBar({ filters, onFiltersChange }: FeedFiltersProps) {
                       id="trending" 
                       checked={filters.showTrending}
                       onCheckedChange={() => {
-                        // Just toggle this filter without affecting others
-                        toggleFilter('showTrending');
+                        // Also update the filter mode if this is checked
+                        const showTrending = !filters.showTrending;
+                        onFiltersChange({
+                          ...filters,
+                          showTrending,
+                          filterMode: showTrending ? 'trending' : filters.filterMode === 'trending' ? 'all' : filters.filterMode
+                        });
                       }}
                     />
                     <Label htmlFor="trending" className="flex items-center gap-2">

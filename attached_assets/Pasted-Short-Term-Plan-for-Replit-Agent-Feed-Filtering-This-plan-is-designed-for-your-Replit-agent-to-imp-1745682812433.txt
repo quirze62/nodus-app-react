@@ -1,0 +1,406 @@
+Short-Term Plan for Replit Agent: Feed Filtering
+This plan is designed for your Replit agent to implement filtered feeds (followers, follows, trendy) in the Nodus app’s client directory using NDK’s useSubscribe hook. It focuses solely on adding the filtering functionality, ensuring simplicity to avoid overwhelming the agent. The plan assumes the app’s existing authentication and relay setup are functional enough to support feed fetching (if not, I’ll note minimal fixes). All steps will be executed in Replit, with testing in the preview and instructions for committing to GitHub.
+Timeline: 1-2 days
+Goals:
+Add followers, follows, and trendy feed filters to useNodusPosts.ts.
+
+Update Home.tsx with a filter selector UI.
+
+Test filters in Replit’s preview.
+
+Commit changes to GitHub.
+Step 1: Update useNodusPosts.ts to Support Filtered Feeds
+Objective: Modify the useNodusPosts hook to fetch posts based on the selected filter mode (all, followers, follows, trendy).
+Tasks:
+Edit useNodusPosts.ts:
+Add a filterMode parameter to toggle between feed types.
+
+Fetch kind 3 events for follows and follows’ follows.
+
+Fetch kind 7/6 events for trendy feed engagement ranking.
+
+Keep NIP-05 verification for consistency.
+javascript
+// client/src/hooks/useNodusPosts.ts
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-react';
+import { useState, useEffect, useContext } from 'react';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { DB } from '@/lib/db';
+import { AuthContext } from '@/contexts/AuthContext';
+
+interface Post extends NDKEvent {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+type FilterMode = 'all' | 'followers' | 'follows' | 'trendy';
+
+export function useNodusPosts(filterMode: FilterMode = 'all') {
+  const { ndk } = useNDK();
+  const { user } = useContext(AuthContext);
+  const [verifiedPosts, setVerifiedPosts] = useState<Post[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const db = new DB();
+
+  // Fetch user follows
+  const [follows, setFollows] = useState<string[]>([]);
+  const { events: followEvents } = useSubscribe({
+    filter: { kinds: [3], authors: user ? [user.pubkey] : [] },
+    enabled: !!ndk && !!user
+  });
+
+  useEffect(() => {
+    if (followEvents.length > 0) {
+      const followPubkeys = followEvents[0].tags
+        .filter(tag => tag[0] === 'p')
+        .map(tag => tag[1]);
+      setFollows(followPubkeys);
+      console.log('Follows:', followPubkeys); // Debug
+    }
+  }, [followEvents]);
+
+  // Fetch follows of follows
+  const [followsOfFollows, setFollowsOfFollows] = useState<string[]>([]);
+  const { events: followsOfFollowsEvents } = useSubscribe({
+    filter: { kinds: [3], authors: follows },
+    enabled: !!ndk && follows.length > 0 && filterMode === 'follows'
+  });
+
+  useEffect(() => {
+    if (followsOfFollowsEvents.length > 0) {
+      const secondDegreePubkeys = followsOfFollowsEvents
+        .flatMap(event => event.tags.filter(tag => tag[0] === 'p').map(tag => tag[1]))
+        .filter((pubkey, index, self) => self.indexOf(pubkey) === index);
+      setFollowsOfFollows(secondDegreePubkeys);
+      console.log('Follows of follows:', secondDegreePubkeys); // Debug
+    }
+  }, [followsOfFollowsEvents]);
+
+  // Define post filter based on mode
+  const getPostFilter = () => {
+    switch (filterMode) {
+      case 'followers':
+        return { kinds: [1], authors: follows, limit: 50 };
+      case 'follows':
+        return { kinds: [1], authors: followsOfFollows, limit: 50 };
+      case 'trendy':
+        return { kinds: [1], limit: 50, since: Math.floor(Date.now() / 1000) - 24 * 3600 };
+      default:
+        return { kinds: [1], limit: 50 };
+    }
+  };
+
+  const { events } = useSubscribe({
+    filter: getPostFilter(),
+    enabled: !!ndk && (filterMode !== 'follows' || followsOfFollows.length > 0)
+  });
+
+  // Fetch engagement for trendy feed
+  const { events: engagementEvents } = useSubscribe({
+    filter: { kinds: [6, 7], limit: 1000, since: Math.floor(Date.now() / 1000) - 24 * 3600 },
+    enabled: !!ndk && filterMode === 'trendy'
+  });
+
+  useEffect(() => {
+    const filterPosts = async () => {
+      let filteredPosts: Post[] = [];
+      for (const event of events) {
+        const isVerified = await db.isNip05Verified(event.pubkey, ndk);
+        if (isVerified) filteredPosts.push(event as Post);
+      }
+
+      if (filterMode === 'trendy') {
+        // Rank posts by engagement (likes + reposts)
+        const engagementCounts = engagementEvents.reduce((acc, event) => {
+          const postId = event.tags.find(tag => tag[0] === 'e')?.[1];
+          if (postId) acc[postId] = (acc[postId] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+
+        filteredPosts = filteredPosts
+          .map(post => ({
+            ...post,
+            engagement: engagementCounts[post.id] || 0
+          }))
+          .sort((a, b) => b.engagement - a.engagement)
+          .slice(0, 50);
+      }
+
+      setVerifiedPosts(filteredPosts);
+      console.log('Filtered posts:', filteredPosts); // Debug
+    };
+    filterPosts().catch(err => setError('Failed to filter posts: ' + err.message));
+  }, [events, engagementEvents, ndk, filterMode]);
+
+  return { posts: verifiedPosts, error };
+}
+
+Notes:
+Replaces the existing useNodusPosts hook but only modifies the feed-fetching logic.
+
+Adds debug logs (console.log) to help the Replit agent troubleshoot.
+
+Requires AuthContext for user data; assumes it provides user.pubkey.
+
+Keeps existing NIP-05 verification via db.ts.
+
+The createPost, likePost, repostPost, and commentPost functions are omitted for brevity but should remain unchanged if present.
+Testing in Replit:
+Run npm start and open the preview.
+
+Check the console (browser DevTools) for logs:
+“Follows: [...]” when logged in.
+
+“Follows of follows: [...]” when selecting the “follows” filter.
+
+“Filtered posts: [...]” for loaded posts.
+Note: Filters won’t work yet without a UI to select modes (added in Step 2).
+Step 2: Add Filter Selector UI to Home.tsx
+Objective: Update the home page to let users switch between filter modes.
+Tasks:
+Edit Home.tsx:
+Add a <select> dropdown to choose filter modes.
+
+Pass the selected filterMode to useNodusPosts.
+javascript
+// client/src/pages/Home.tsx
+import { useContext, useState } from 'react';
+import { AuthContext } from '@/contexts/AuthContext';
+import { useNodusPosts } from '@/hooks/useNodusPosts';
+import { PostCard } from '@/components/feed/PostCard';
+import { Login } from '@/components/Login';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
+
+export const Home = () => {
+  const { user, error: authError } = useContext(AuthContext);
+  const [filterMode, setFilterMode] = useState<'all' | 'followers' | 'follows' | 'trendy'>('all');
+  const { posts, error: postError } = useNodusPosts(filterMode);
+
+  return (
+    <div>
+      <h1>Nodus Feed</h1>
+      <OfflineIndicator />
+      {authError && <p style={{ color: 'red' }}>{authError}</p>}
+      {postError && <p style={{ color: 'red' }}>{postError}</p>}
+      <div>
+        <label>Filter: </label>
+        <select value={filterMode} onChange={e => setFilterMode(e.target.value as any)}>
+          <option value="all">All Posts</option>
+          <option value="followers">Followers</option>
+          <option value="follows">Follows of Follows</option>
+          <option value="trendy">Trendy</option>
+        </select>
+      </div>
+      {!user && <Login />}
+      {user && (
+        <ul>
+          {posts.map(post => (
+            <PostCard key={post.id} post={post} />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+Notes:
+Assumes existing imports and components (PostCard, Login, OfflineIndicator).
+
+Displays errors from AuthContext and useNodusPosts for debugging.
+
+Requires a logged-in user for followers/follows filters.
+Testing in Replit:
+Run npm start and open the preview.
+
+Log in using a private key or generate a new keypair (via Login.tsx).
+
+Test each filter mode in the dropdown:
+All: Shows all NIP-05 verified kind 1 posts.
+
+Followers: Shows posts from users in your kind 3 contact list (requires follows).
+
+Follows of Follows: Shows posts from second-degree follows.
+
+Trendy: Shows recent posts (past 24 hours) sorted by likes/reposts.
+Check the console for:
+“Follows: [...]” (non-empty for followers filter).
+
+“Follows of follows: [...]” (non-empty for follows filter).
+
+“Filtered posts: [...]” (posts matching the filter).
+If no posts appear:
+Ensure you’re logged in (followers/follows require user.pubkey).
+
+Check for errors like “Failed to filter posts” in the UI or console.
+
+Verify relays are connected (see Step 3).
+Step 3: Ensure Relay Connectivity for Feed Fetching
+Objective: Verify reliable relays to fetch kind 3, 1, 7, and 6 events in Replit.
+Tasks:
+Check App.tsx:
+Ensure reliable relays are used.
+
+If not, update:
+javascript
+// client/src/App.tsx
+import { NDKProvider } from '@nostr-dev-kit/ndk-react';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { Router } from '@/Router';
+import { WebSocket } from 'ws';
+
+global.WebSocket = WebSocket;
+
+export const App = () => (
+  <NDKProvider relayUrls={[
+    'wss://relay.mynodus.com',
+    'wss://relay.damus.io',
+    'wss://relay.nostr.info'
+  ]}>
+    {({ ndk }) => (
+      <AuthProvider ndk={ndk}>
+        <Router />
+      </AuthProvider>
+    )}
+  </NDKProvider>
+);
+Notes:
+Only update if existing relays are unreliable (e.g., wss://relay.nostr.band).
+
+These relays support kind 3, 1, 7, and 6 events needed for filtering.
+Check ndk.ts:
+Ensure it handles relay connections with retries.
+
+If missing or outdated, update:
+javascript
+// client/src/lib/ndk.ts
+import { NDK, NDKRelay } from '@nostr-dev-kit/ndk';
+import { WebSocket } from 'ws';
+
+global.WebSocket = WebSocket;
+
+export async function connectNDK(ndk: NDK, retries = 3, timeout = 10000) {
+  const reliableRelays = ['wss://relay.mynodus.com', 'wss://relay.damus.io', 'wss://relay.nostr.info'];
+  for (let i = 0; i < retries; i++) {
+    try {
+      await ndk.connect(timeout);
+      const connected = Array.from(ndk.pool.relays.entries())
+        .filter(([_, r]) => r.status === 1)
+        .map(([url]) => url);
+      console.log('NDK connected to relays:', connected);
+      if (connected.length === 0) throw new Error('No relays connected');
+      return true;
+    } catch (error) {
+      console.error(`NDK connection attempt ${i + 1} failed:`, error);
+      if (i === retries - 1) {
+        console.error('Falling back to reliable relays');
+        reliableRelays.forEach(url => {
+          if (!ndk.pool.relays.has(url)) {
+            ndk.pool.addRelay(new NDKRelay(url));
+          }
+        });
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+}
+Notes:
+Only update if the existing ndk.ts lacks retry logic or reliable relays.
+
+Adds debug logs for connected relays.
+Testing in Replit:
+Run npm start and open the preview.
+
+Check the console for “NDK connected to relays: [...]” (should include wss://relay.mynodus.com).
+
+If no relays connect or OfflineIndicator appears:
+Test relay connectivity:
+bash
+node -e "const WebSocket = require('ws'); const ws = new WebSocket('wss://relay.mynodus.com'); ws.on('open', () => { console.log('Connected'); ws.close(); }); ws.on('error', e => console.error('Error:', e));"
+If it fails, try alternative relays (e.g., wss://relay.nostr.wine) in App.tsx.
+Step 4: Commit and Test in Replit Preview
+Objective: Save changes, test the filtered feeds, and push to GitHub.
+Tasks:
+Commit Changes:
+bash
+cd client
+git add .
+git commit -m "Add filtered feeds (followers, follows, trendy) in Replit"
+git push origin main
+Test in Replit Preview:
+Run npm start and open the preview.
+
+Log in using a private key or generate a new keypair.
+
+Test each filter mode in the dropdown:
+All: Shows all NIP-05 verified kind 1 posts.
+
+Followers: Shows posts from users in your kind 3 contact list (requires follows).
+
+Follows of Follows: Shows posts from second-degree follows.
+
+Trendy: Shows recent posts (past 24 hours) sorted by likes/reposts.
+Check the console (browser DevTools) for:
+“Follows: [...]” (non-empty for followers filter).
+
+“Follows of follows: [...]” (non-empty for follows filter).
+
+“Filtered posts: [...]” (posts matching the filter).
+Verify posts load correctly and respect NIP-05 verification.
+Debug Issues:
+No Posts in Feed:
+Ensure you’re logged in (followers/follows require user.pubkey).
+
+Check console for empty follows or followsOfFollows arrays.
+
+Verify kind 3 events are fetched: Add console.log('Follow events:', followEvents) in useNodusPosts.ts.
+Relays Not Connecting:
+Check console for “NDK connected to relays: [...]”.
+
+Test relays individually (see Step 3).
+Errors in UI:
+Look for “Failed to filter posts” or other errors.
+
+Check console for specific messages (e.g., “NDK not initialized”).
+No Trendy Posts:
+Ensure relays support kind 7/6 events.
+
+Check engagementEvents length: Add console.log('Engagement events:', engagementEvents) in useNodusPosts.ts.
+Testing in Replit:
+Confirm all filter modes display relevant posts.
+
+Ensure the UI updates when switching filters.
+
+Verify no errors block feed loading (e.g., authentication or relay issues).
+Recommendations for Replit Agent
+Keep It Simple: The plan modifies only useNodusPosts.ts, Home.tsx, App.tsx, and ndk.ts to focus on filtering. Avoid touching other files unless debugging requires it.
+
+Debugging Tips:
+Add console logs to track data:
+javascript
+console.log('Filter applied:', getPostFilter());
+console.log('Posts loaded:', verifiedPosts);
+Check relay status:
+javascript
+console.log('Relays:', Array.from(ndk.pool.relays.entries()));
+If the followers filter is empty, ensure your account has follows (kind 3 event with p tags).
+Replit Constraints: Step 3 ensures reliable relays for Replit’s network. If relays fail, test each one individually.
+Post-Implementation Steps
+Verify in Replit:
+Test all filter modes in the preview.
+
+Confirm posts load and filters switch correctly.
+
+Check console for debug logs and errors.
+Push to GitHub:
+Commit and push (Step 4).
+
+This allows syncing with Cursor if needed.
+Debug if Needed:
+If filters don’t work, focus on console logs for follows, followsOfFollows, and engagementEvents.
+
+If relays are the issue, try adding wss://relay.nostr.wine to App.tsx.
+
