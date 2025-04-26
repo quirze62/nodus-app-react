@@ -1,20 +1,25 @@
 // client/src/hooks/useNodusPosts.ts
 import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-hooks';
 import { useState, useEffect, useContext } from 'react';
-import { NDKEvent } from '@nostr-dev-kit/ndk';
+import { NDKEvent, NDKFilter, NDK } from '@nostr-dev-kit/ndk';
 import { AuthContext } from '@/contexts/AuthContext';
 import logger from '../lib/logger';
 import { FilterMode } from '@/components/feed/FeedFilters';
+import { db } from '../lib/db';
 
-interface Post extends NDKEvent {
+// Type for our posts
+interface Post {
   id: string;
   pubkey: string;
   content: string;
   created_at: number;
   tags: string[][];
+  kind: number;
+  sig?: string;
   engagement?: number;
 }
 
+// Hook for fetching and working with posts
 export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50) {
   const { ndk } = useNDK();
   const { user } = useContext(AuthContext);
@@ -24,9 +29,12 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
 
   // Fetch user follows
   const [follows, setFollows] = useState<string[]>([]);
+  
+  // Get follow events
+  const followFilter = user ? { kinds: [3], authors: [user.publicKey] } : null;
   const { events: followEvents } = useSubscribe({
-    filter: { kinds: [3], authors: user ? [user.publicKey] : [] },
-    enabled: !!ndk && !!user
+    filters: followFilter ? [followFilter] : [],
+    enabled: !!ndk && !!user && !!followFilter
   });
 
   useEffect(() => {
@@ -41,8 +49,11 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
 
   // Fetch follows of follows
   const [followsOfFollows, setFollowsOfFollows] = useState<string[]>([]);
+  
+  // Get follow-of-follows events
+  const followsOfFollowsFilter = follows.length > 0 ? { kinds: [3], authors: follows } : null;
   const { events: followsOfFollowsEvents } = useSubscribe({
-    filter: { kinds: [3], authors: follows },
+    filters: followsOfFollowsFilter ? [followsOfFollowsFilter] : [],
     enabled: !!ndk && follows.length > 0 && filterMode === 'follows'
   });
 
@@ -57,28 +68,32 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
   }, [followsOfFollowsEvents]);
 
   // Get post filter based on mode
-  const getPostFilter = () => {
+  const getPostFilter = (): NDKFilter | null => {
     switch (filterMode) {
       case 'followers':
-        return { kinds: [1], authors: follows, limit: 50 };
+        return follows.length > 0 ? { kinds: [1], authors: follows, limit } : null;
       case 'follows':
-        return { kinds: [1], authors: followsOfFollows, limit: 50 };
+        return followsOfFollows.length > 0 ? { kinds: [1], authors: followsOfFollows, limit } : null;
       case 'trending':
-        return { kinds: [1], limit: 50, since: Math.floor(Date.now() / 1000) - 24 * 3600 };
+        return { kinds: [1], limit, since: Math.floor(Date.now() / 1000) - 24 * 3600 };
       default:
-        return { kinds: [1], limit: 50 };
+        return { kinds: [1], limit };
     }
   };
 
   // Fetch posts
-  const { events: postEvents, loading: postsLoading } = useSubscribe({
-    filter: getPostFilter(),
-    enabled: !!ndk && (filterMode !== 'follows' || followsOfFollows.length > 0)
+  const postFilter = getPostFilter();
+  const { events: postEvents, eose: postsLoaded } = useSubscribe({
+    filters: postFilter ? [postFilter] : [],
+    enabled: !!ndk && !!postFilter
   });
 
   // Fetch engagement for trendy feed
+  const engagementFilter = filterMode === 'trending' ? 
+    { kinds: [6, 7], limit: 1000, since: Math.floor(Date.now() / 1000) - 24 * 3600 } : null;
+    
   const { events: engagementEvents } = useSubscribe({
-    filter: { kinds: [6, 7], limit: 1000, since: Math.floor(Date.now() / 1000) - 24 * 3600 },
+    filters: engagementFilter ? [engagementFilter] : [],
     enabled: !!ndk && filterMode === 'trending'
   });
 
@@ -91,11 +106,25 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
       try {
         for (const event of postEvents) {
           try {
-            const isVerified = await db.isNip05Verified(event.pubkey, ndk);
-            if (isVerified) {
-              filteredPosts.push(event as Post);
-            } else {
-              logger.info(`Skipped post from unverified user: ${event.pubkey}`);
+            // Convert NDKEvent to Post object
+            const post: Post = {
+              id: event.id,
+              pubkey: event.pubkey,
+              content: event.content,
+              created_at: event.created_at,
+              tags: event.tags,
+              kind: event.kind,
+              sig: event.sig
+            };
+            
+            // Check NIP-05 verification
+            if (ndk) {
+              const isVerified = await db.isNip05Verified(event.pubkey, ndk);
+              if (isVerified) {
+                filteredPosts.push(post);
+              } else {
+                logger.info(`Skipped post from unverified user: ${event.id}`);
+              }
             }
           } catch (err) {
             logger.error(`Error checking verification for ${event.pubkey}:`, err);
@@ -153,7 +182,16 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
       logger.info('Published post:', event.id);
       
       // Add to local posts
-      const newPost = event as Post;
+      const newPost: Post = {
+        id: event.id,
+        pubkey: event.pubkey,
+        content: event.content,
+        created_at: event.created_at,
+        tags: event.tags,
+        kind: event.kind,
+        sig: event.sig
+      };
+      
       setVerifiedPosts(prev => [newPost, ...prev]);
       
       return newPost;
@@ -166,7 +204,7 @@ export function useNodusPosts(filterMode: FilterMode = 'all', limit: number = 50
 
   return { 
     posts: verifiedPosts, 
-    isLoading: isLoading || postsLoading, 
+    isLoading: isLoading || !postsLoaded, 
     error,
     createPost
   };
