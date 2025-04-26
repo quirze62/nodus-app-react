@@ -1,10 +1,37 @@
 import { useState, useEffect } from 'react';
-import { NDKEvent, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
+import { NDKEvent, NDKUser, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { useNdk } from '../contexts/NdkContext';
 import { useAuth } from '../contexts/AuthContext';
 import logger from '../lib/logger';
 import { NostrEvent, EventKind } from '../lib/nostr';
 import { db } from '../lib/db';
+import { isNIP05Verified, isPersonallyApproved } from '../lib/ndk';
+
+// Helper function to check if a user is a valid Nodus network member
+async function isValidNodusMember(user: NDKUser): Promise<boolean> {
+  try {
+    // First check if the user has a NIP-05 identifier (base requirement)
+    if (!user.profile?.nip05) {
+      return false;
+    }
+    
+    // Next, check if they're verified via actual NIP-05 protocol
+    // (the isNIP05Verified function actually does a DNS lookup)
+    const hasValidNIP05 = await isNIP05Verified(user.pubkey);
+    if (!hasValidNIP05) {
+      return false;
+    }
+    
+    // Finally, check if they're in our allowed list
+    // In a production app, this would check against a database or other source
+    const isApproved = await isPersonallyApproved(user.pubkey);
+    
+    return isApproved;
+  } catch (error) {
+    logger.error("Error validating Nodus member:", error);
+    return false;
+  }
+}
 
 // Hook for fetching and working with posts
 export function useNodusPosts(limit: number = 50) {
@@ -59,29 +86,41 @@ export function useNodusPosts(limit: number = 50) {
         // Check for verified users (has NIP-05)
         // Get profile for author if we don't already have it
         const user = ndk.getUser({ pubkey: event.pubkey });
-        await user.fetchProfile();
-        
-        // Only allow posts from users with NIP-05 verification
-        if (user.profile?.nip05) {
-          logger.info(`Accepted post from verified user: ${user.profile.nip05}`);
-          events.push(event);
+        try {
+          await user.fetchProfile();
           
-          // Store in database
-          db.storeEvent(event).catch((err: Error) => {
-            logger.error('Error storing event in database', err);
-          });
-          
-          // Add cluster tag for Matryoshka testing
-          if (!event.tags.some(tag => tag[0] === 'cluster')) {
-            event.tags.push(['cluster', 'city1']);
+          // Only allow posts from users with NIP-05 verification
+          if (user.profile?.nip05) {
+            // Extra verification step - check if user is part of our closed network
+            const isVerified = await isValidNodusMember(user);
+            
+            if (isVerified) {
+              logger.info(`Accepted post from verified user: ${user.profile.nip05}`);
+              events.push(event);
+              
+              // Store in database
+              db.storeEvent(event).catch((err: Error) => {
+                logger.error('Error storing event in database', err);
+              });
+              
+              // Add cluster tag for Matryoshka testing if not present
+              if (!event.tags.some(tag => tag[0] === 'cluster')) {
+                event.tags.push(['cluster', 'city1']);
+              }
+              
+              // Sort and update state
+              const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
+              setPosts(sortedEvents);
+              setVerifiedPosts(sortedEvents);
+            } else {
+              logger.info(`Skipped post from user with NIP-05 but not in approved network: ${user.profile.nip05}`);
+            }
+          } else {
+            logger.info(`Skipped post from unverified user: ${event.pubkey}`);
           }
-          
-          // Sort and update state
-          const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
-          setPosts(sortedEvents);
-          setVerifiedPosts(sortedEvents);
-        } else {
-          logger.info(`Skipped post from unverified user: ${event.pubkey}`);
+        } catch (profileError) {
+          logger.warn(`Failed to fetch profile for ${event.pubkey}: ${profileError}`);
+          logger.info(`Skipped post due to profile fetch failure: ${event.pubkey}`);
         }
       } catch (err) {
         logger.error('Error processing event', err);
