@@ -34,7 +34,9 @@ export default function PostCard({ post, onReply }: PostCardProps) {
     getProfile, 
     getReactions, 
     getReposts, 
-    getReplies 
+    getReplies,
+    createReaction,
+    repostNote
   } = useNdk();
 
   // Load profile and interaction counts
@@ -101,8 +103,20 @@ export default function PostCard({ post, onReply }: PostCardProps) {
         return;
       }
       
-      // Create a reaction (like)
-      const reaction = await likePost(post.id, post.pubkey);
+      // Create a reaction (like) - try both implementations for better reliability
+      let reaction = null;
+      
+      // First try using the direct NDK method
+      try {
+        reaction = await createReaction(post.id, '+');
+      } catch (err) {
+        logger.error('Error using direct NDK for reaction, trying useNodusPosts:', err);
+      }
+      
+      // If that fails, try the useNodusPosts method
+      if (!reaction) {
+        reaction = await likePost(post.id, post.pubkey);
+      }
       
       if (reaction) {
         setLikeCount(prev => prev + 1);
@@ -136,8 +150,20 @@ export default function PostCard({ post, onReply }: PostCardProps) {
         return;
       }
       
-      // Create a repost
-      const repost = await repostPost(post.id, post.pubkey);
+      // Create a repost - try both implementations for better reliability
+      let repost = null;
+      
+      // First try using the direct NDK method
+      try {
+        repost = await repostNote(post.id, post.pubkey);
+      } catch (err) {
+        logger.error('Error using direct NDK for repost, trying useNodusPosts:', err);
+      }
+      
+      // If that fails, try the useNodusPosts method
+      if (!repost) {
+        repost = await repostPost(post.id, post.pubkey);
+      }
       
       if (repost) {
         setRepostCount(prev => prev + 1);
@@ -339,18 +365,30 @@ function CommentForm({ postId, postPubkey, rootId, onSuccess }: CommentFormProps
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { replyToPost } = useNodusPosts();
-  const { createReaction, replyToNote } = useNdk();
+  const { replyToNote } = useNdk();
   
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!content.trim()) return;
+    if (!content.trim() || isSubmitting) return;
     
     setIsSubmitting(true);
     
     try {
-      // Use the replyToPost from useNodusPosts which handles database storage too
-      const reply = await replyToPost(postId, postPubkey, rootId, content);
+      // Try to send the reply in two ways for better reliability
+      let reply = null;
+      
+      // First try using the direct NDK method
+      try {
+        reply = await replyToNote(postId, postPubkey, rootId, content);
+      } catch (err) {
+        logger.error('Error using direct NDK for reply, trying useNodusPosts:', err);
+      }
+      
+      // If that fails, try the useNodusPosts method
+      if (!reply) {
+        reply = await replyToPost(postId, postPubkey, rootId, content);
+      }
       
       if (reply) {
         setContent('');
@@ -358,9 +396,11 @@ function CommentForm({ postId, postPubkey, rootId, onSuccess }: CommentFormProps
         logger.info(`Successfully replied to post: ${postId}`);
       } else {
         logger.error('Failed to create reply - no event returned');
+        alert('Could not send reply. Please check your connection.');
       }
     } catch (error) {
       logger.error('Error submitting reply:', error);
+      alert('Error sending reply. Please try again later.');
     } finally {
       setIsSubmitting(false);
     }
