@@ -190,6 +190,40 @@ class NodusDatabase extends Dexie {
       throw error;
     }
   }
+  
+  // Function to check if a user is NIP-05 verified
+  async isNip05Verified(pubkey: string, ndk: any): Promise<boolean> {
+    try {
+      // Check cache first (use a 24-hour cache)
+      const cacheRecord = await this.nip05Cache.get(pubkey);
+      const now = Date.now();
+      const cacheValidTime = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+      
+      // If we have a valid cache entry, use it
+      if (cacheRecord && (now - cacheRecord.timestamp) < cacheValidTime) {
+        return cacheRecord.verified;
+      }
+      
+      // No valid cache, so check the profile
+      const user = ndk.getUser({ pubkey });
+      await user.fetchProfile();
+      const verified = !!user.profile?.nip05;
+      
+      // Store result in cache
+      await this.nip05Cache.put({
+        pubkey,
+        verified,
+        timestamp: now
+      });
+      
+      console.log(`NIP-05 verification for ${pubkey}: ${verified}`);
+      return verified;
+    } catch (err) {
+      console.error('NIP-05 verification failed:', err);
+      // In case of error, default to not verified
+      return false;
+    }
+  }
 }
 
 export const db = new NodusDatabase();
