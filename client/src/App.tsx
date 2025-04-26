@@ -17,6 +17,7 @@ import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import { queryClient } from "./lib/queryClient";
 import NDK from '@nostr-dev-kit/ndk';
+import { WebSocket } from 'ws';
 
 
 function MainLayout({ children }: { children: React.ReactNode }) {
