@@ -1,16 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { NDKEvent, NDKFilter, NDKSubscriptionOptions, NDKSubscription } from '@nostr-dev-kit/ndk';
 import { useNdk } from '../contexts/NdkContext';
+import { useAuth } from '../contexts/AuthContext';
 import logger from '../lib/logger';
-import { NostrEvent } from '../lib/nostr';
+import { NostrEvent, EventKind } from '../lib/nostr';
 import { db } from '../lib/db';
-
-// Post events are kind 1 in Nostr
-const TEXT_NOTE_KIND = 1;
 
 // Hook for fetching and working with posts
 export function useNodusPosts(limit: number = 50) {
-  const { ndk } = useNdk();
+  const { ndk, user: ndkUser } = useNdk();
+  const { user: authUser } = useAuth();
   const [posts, setPosts] = useState<NostrEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +17,7 @@ export function useNodusPosts(limit: number = 50) {
   // Filter for text notes (posts)
   // We'll filter for NIP-05 verified users
   const filter: NDKFilter = {
-    kinds: [TEXT_NOTE_KIND],
+    kinds: [EventKind.TEXT_NOTE],
     limit
   };
   
@@ -35,7 +34,7 @@ export function useNodusPosts(limit: number = 50) {
     logger.info(`Fetching up to ${limit} posts from Nostr network`);
     
     // Start with posts from database
-    db.getEventsByKind(TEXT_NOTE_KIND, limit)
+    db.getEventsByKind(EventKind.TEXT_NOTE, limit)
       .then((dbEvents: NostrEvent[]) => {
         if (dbEvents.length > 0) {
           logger.info(`Loaded ${dbEvents.length} posts from local database`);
@@ -101,9 +100,15 @@ export function useNodusPosts(limit: number = 50) {
       return null;
     }
     
+    if (!ndk.signer) {
+      setError('Authentication required to create posts');
+      logger.error('Attempted to create post without authentication');
+      return null;
+    }
+    
     try {
       const event = new NDKEvent(ndk);
-      event.kind = TEXT_NOTE_KIND;
+      event.kind = EventKind.TEXT_NOTE;
       event.content = content;
       event.tags = tags;
       
@@ -125,11 +130,154 @@ export function useNodusPosts(limit: number = 50) {
     }
   };
   
+  // Function to like a post (create a reaction)
+  const likePost = async (postId: string, postPubkey: string): Promise<NostrEvent | null> => {
+    if (!ndk) {
+      setError('NDK not initialized');
+      return null;
+    }
+    
+    if (!ndk.signer) {
+      setError('Authentication required to like posts');
+      logger.error('Attempted to like post without authentication');
+      return null;
+    }
+    
+    try {
+      logger.info(`Creating reaction for post ${postId}`);
+      
+      const event = new NDKEvent(ndk);
+      event.kind = EventKind.REACTION;
+      event.content = '+'; // "+" is a like in Nostr
+      event.tags = [
+        ['e', postId], // The event being reacted to
+        ['p', postPubkey] // The author of the original event
+      ];
+      
+      await event.publish();
+      
+      logger.info('Successfully liked post');
+      
+      const reaction = convertNDKEventToNostrEvent(event);
+      
+      // Store in local DB
+      await db.storeEvent(reaction);
+      
+      return reaction;
+    } catch (err) {
+      logger.error('Error liking post', err);
+      setError('Failed to like post');
+      return null;
+    }
+  };
+  
+  // Function to repost a post
+  const repostPost = async (postId: string, postPubkey: string): Promise<NostrEvent | null> => {
+    if (!ndk) {
+      setError('NDK not initialized');
+      return null;
+    }
+    
+    if (!ndk.signer) {
+      setError('Authentication required to repost');
+      logger.error('Attempted to repost without authentication');
+      return null;
+    }
+    
+    try {
+      logger.info(`Creating repost for event ${postId}`);
+      
+      const event = new NDKEvent(ndk);
+      event.kind = EventKind.REPOST;
+      event.content = ''; // Repost events typically have empty content
+      event.tags = [
+        ['e', postId], // The event being reposted
+        ['p', postPubkey] // The author of the original event
+      ];
+      
+      await event.publish();
+      
+      logger.info('Successfully reposted');
+      
+      const repost = convertNDKEventToNostrEvent(event);
+      
+      // Store in local DB
+      await db.storeEvent(repost);
+      
+      return repost;
+    } catch (err) {
+      logger.error('Error reposting', err);
+      setError('Failed to repost');
+      return null;
+    }
+  };
+  
+  // Function to reply to a post
+  const replyToPost = async (
+    postId: string, 
+    postPubkey: string, 
+    rootId: string | undefined, 
+    content: string,
+    additionalTags: string[][] = []
+  ): Promise<NostrEvent | null> => {
+    if (!ndk) {
+      setError('NDK not initialized');
+      return null;
+    }
+    
+    if (!ndk.signer) {
+      setError('Authentication required to reply');
+      logger.error('Attempted to reply without authentication');
+      return null;
+    }
+    
+    try {
+      logger.info(`Creating reply to post ${postId}`);
+      
+      const event = new NDKEvent(ndk);
+      event.kind = EventKind.TEXT_NOTE;
+      event.content = content;
+      
+      // Start with basic tags for the direct parent
+      const tags = [
+        ['e', postId, '', 'reply'], // The event being replied to
+        ['p', postPubkey] // The author of that event
+      ];
+      
+      // Add root tag if this is a reply to a reply (thread)
+      if (rootId && rootId !== postId) {
+        tags.push(['e', rootId, '', 'root']);
+      }
+      
+      // Add any additional tags
+      event.tags = [...tags, ...additionalTags];
+      
+      await event.publish();
+      
+      logger.info('Successfully replied to post');
+      
+      const reply = convertNDKEventToNostrEvent(event);
+      
+      // Store in local DB
+      await db.storeEvent(reply);
+      
+      return reply;
+    } catch (err) {
+      logger.error('Error replying to post', err);
+      setError('Failed to send reply');
+      return null;
+    }
+  };
+  
   return {
     posts,
     isLoading,
     error,
-    createPost
+    createPost,
+    likePost,
+    repostPost,
+    replyToPost,
+    isAuthenticated: !!ndk?.signer
   };
 }
 

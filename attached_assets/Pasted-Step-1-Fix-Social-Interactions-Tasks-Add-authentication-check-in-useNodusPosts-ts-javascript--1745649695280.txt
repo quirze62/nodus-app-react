@@ -1,0 +1,102 @@
+Step 1: Fix Social Interactions
+Tasks:
+Add authentication check in useNodusPosts.ts:
+javascript
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-react';
+import { useState, useEffect } from 'react';
+import { NDKEvent, NDKUser } from '@nostr-dev-kit/ndk';
+
+interface Post extends NDKEvent {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+
+export function useNodusPosts() {
+  const { ndk } = useNDK();
+  const [verifiedPosts, setVerifiedPosts] = useState<Post[]>([]);
+  const { events } = useSubscribe({
+    filter: { kinds: [1], limit: 50 },
+    enabled: !!ndk
+  });
+
+  useEffect(() => {
+    const filterPosts = async () => {
+      const verified: Post[] = [];
+      for (const event of events) {
+        const user = await ndk.getUser({ pubkey: event.pubkey });
+        if (user.nip05) verified.push(event as Post);
+      }
+      setVerifiedPosts(verified);
+    };
+    filterPosts();
+  }, [events, ndk]);
+
+  const createPost = async (content: string) => {
+    if (!ndk || !ndk.signer) throw new Error('NDK or signer not initialized');
+    const event = new NDKEvent(ndk);
+    event.kind = 1;
+    event.content = content;
+    event.created_at = Math.floor(Date.now() / 1000);
+    await event.sign();
+    await ndk.publish(event);
+  };
+
+  const likePost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) throw new Error('NDK or signer not initialized');
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 7;
+      event.content = '+';
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      await ndk.publish(event);
+    } catch (error) {
+      console.error('Failed to like post:', error);
+    }
+  };
+
+  const repostPost = async (postId: string, pubkey: string) => {
+    if (!ndk || !ndk.signer) throw new Error('NDK or signer not initialized');
+    try {
+      const event = new NDKEvent(ndk);
+      event.kind = 6;
+      event.tags = [['e', postId], ['p', pubkey]];
+      await event.sign();
+      await ndk.publish(event);
+    } catch (error) {
+      console.error('Failed to repost:', error);
+    }
+  };
+
+  return { posts: verifiedPosts, createPost, likePost, repostPost };
+}
+Configure ndk.signer in NdkContext.tsx (e.g., using a temporary keypair for testing):
+javascript
+import { NDKProvider } from '@nostr-dev-kit/ndk-react';
+import { NDKPrivateKeySigner } from '@nostr-dev-kit/ndk';
+import { generateSecretKey, getPublicKey } from 'nostr-tools';
+
+export const App = () => {
+  const signer = new NDKPrivateKeySigner(generateSecretKey());
+  return (
+    <NDKProvider
+      relayUrls={[
+        'wss://relay.mynodus.com',
+        'wss://relay.damus.io',
+        'wss://relay.nostr.band',
+        'wss://nos.lol',
+        'wss://nostr.wine'
+      ]}
+      signer={signer}
+    >
+      <AuthProvider>
+        <Router />
+      </AuthProvider>
+    </NDKProvider>
+  );
+};
+Test: Verify that posts, likes, and reposts work. Check console logs for successful EVENT publishes.
+

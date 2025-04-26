@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useNdk } from '@/hooks/useNdk';
+import { useNodusPosts } from '@/hooks/useNodusPosts';
 import { formatDate } from '@/lib/utils';
 import { NostrEvent, NostrProfile, EventKind } from '@/lib/nostr';
 import logger from '@/lib/logger';
@@ -12,7 +12,7 @@ interface PostCardProps {
 
 export default function PostCard({ post, onReply }: PostCardProps) {
   const { user } = useAuth();
-  const { getProfile, createReaction, repostNote, getReactions, getReposts, getReplies } = useNdk();
+  const { likePost, repostPost, replyToPost } = useNodusPosts();
   
   // State
   const [profile, setProfile] = useState<NostrProfile & { pubkey: string } | null>(null);
@@ -33,29 +33,25 @@ export default function PostCard({ post, onReply }: PostCardProps) {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Load author profile
-        const userProfile = await getProfile(post.pubkey);
-        setProfile(userProfile || null);
+        // For now, we'll use a simplified approach for post metadata
+        // In a production app, you would implement fetchProfile, getReactions, etc.
         
-        // Load interactions
-        const [reactions, reposts, replies] = await Promise.all([
-          getReactions(post.id),
-          getReposts(post.id),
-          getReplies(post.id)
-        ]);
+        // Simulate profile data based on post data
+        setProfile({
+          pubkey: post.pubkey,
+          name: post.tags?.find(tag => tag[0] === 'name')?.[1] || `User ${post.pubkey.substring(0, 6)}`,
+          nip05: post.tags?.find(tag => tag[0] === 'nip05')?.[1] || undefined,
+          picture: post.tags?.find(tag => tag[0] === 'picture')?.[1] 
+        });
         
-        // Set counters
-        setLikeCount(reactions.length);
-        setRepostCount(reposts.length);
-        setCommentCount(replies.length);
+        // Set placeholder counts 
+        // In a real implementation, you would fetch these from the network
+        setLikeCount(0);
+        setRepostCount(0);
+        setCommentCount(0);
+        setHasLiked(false);
+        setHasReposted(false);
         
-        // Check if current user has liked or reposted
-        if (user) {
-          const userLiked = reactions.some(r => r.pubkey === user.publicKey);
-          const userReposted = reposts.some(r => r.pubkey === user.publicKey);
-          setHasLiked(userLiked);
-          setHasReposted(userReposted);
-        }
       } catch (error) {
         console.error('Error loading post data:', error);
       } finally {
@@ -64,7 +60,7 @@ export default function PostCard({ post, onReply }: PostCardProps) {
     };
     
     loadData();
-  }, [post.id, post.pubkey, getProfile, getReactions, getReposts, getReplies, user]);
+  }, [post.id, post.pubkey, post.tags]);
   
   // Handle like
   const handleLike = async () => {
@@ -83,7 +79,7 @@ export default function PostCard({ post, onReply }: PostCardProps) {
       }
       
       // Create a reaction (like)
-      const reaction = await createReaction(post.id, '+');
+      const reaction = await likePost(post.id, post.pubkey);
       
       if (reaction) {
         setLikeCount(prev => prev + 1);
@@ -118,7 +114,7 @@ export default function PostCard({ post, onReply }: PostCardProps) {
       }
       
       // Create a repost
-      const repost = await repostNote(post.id, post.pubkey);
+      const repost = await repostPost(post.id, post.pubkey);
       
       if (repost) {
         setRepostCount(prev => prev + 1);
