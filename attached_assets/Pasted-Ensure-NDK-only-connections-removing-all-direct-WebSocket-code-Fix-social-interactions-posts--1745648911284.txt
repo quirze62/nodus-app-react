@@ -1,0 +1,232 @@
+Ensure NDK-only connections, removing all direct WebSocket code.
+
+Fix social interactions (posts, likes, reposts).
+
+Implement basic clustering (e.g., city/neighborhood with door relays).
+
+Resolve Replit-specific issues (WebSocket connectivity, TypeScript errors).
+Step 1: Clean Up Legacy Code
+Tasks:
+Delete unused WebSocket files:
+bash
+rm client/src/components/DirectNostrRelayTest.tsx
+rm client/src/components/WebSocketTester.tsx
+rm client/src/lib/simpleRelayConnector.ts
+rm client/src/lib/simpleNostr.ts
+rm client/src/lib/hybridNostr.ts
+Remove references to simpleNostr, simpleRelayConnector, or useSimpleImplementation:
+bash
+grep -r "simpleNostr\|simpleRelayConnector\|useSimpleImplementation" --include="*.ts" --include="*.tsx" ./client/src/
+
+Edit files (e.g., RelaySettings.tsx, Home.tsx) to remove these imports.
+
+Verify package.json includes only necessary dependencies:
+json
+{
+  "dependencies": {
+    "@nostr-dev-kit/ndk": "^2.8.2",
+    "@nostr-dev-kit/ndk-react": "^2.2.0",
+    "react": "^18.2.0",
+    "typescript": "^5.0.0",
+    "ws": "^8.14.2"
+  }
+}
+Deliverable: A codebase free of direct WebSocket connections, using only NDK.
+Step 2: Stabilize NDK Connections
+Tasks:
+Update NdkContext.tsx to use NDKProvider from ndk-react and add WebSocket polyfill:
+javascript
+// client/src/contexts/NdkContext.tsx
+import { NDKProvider } from '@nostr-dev-kit/ndk-react';
+import { WebSocket } from 'ws';
+
+export const App = () => {
+  global.WebSocket = WebSocket; // Polyfill for Replit
+  return (
+    <NDKProvider relayUrls={[
+      'wss://relay.mynodus.com',
+      'wss://relay.damus.io',
+      'wss://relay.nostr.band',
+      'wss://nos.lol',
+      'wss://nostr.wine'
+    ]}>
+      <AuthProvider>
+        <Router />
+      </AuthProvider>
+    </NDKProvider>
+  );
+};
+Add retry logic in client/src/lib/ndk.ts:
+javascript
+// client/src/lib/ndk.ts
+import NDK from '@nostr-dev-kit/ndk';
+
+export async function connectNDK(ndk, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await ndk.connect(5000);
+      console.log('NDK connected to relays:', Array.from(ndk.pool.relays.keys()));
+      return;
+    } catch (error) {
+      console.error(`NDK connection attempt ${i + 1} failed:`, error);
+      if (i === retries - 1) throw new Error('Failed to connect NDK');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+}
+Debug Replit connectivity:
+Test each relay individually:
+bash
+node -e "const WebSocket = require('ws'); const ws = new WebSocket('wss://relay.mynodus.com'); ws.on('open', () => { console.log('Connected'); ws.close(); }); ws.on('error', e => console.error('Error:', e));"
+If public relays fail, prioritize wss://relay.mynodus.com and add fallbacks (e.g., wss://relay.nostr.info).
+Deliverable: Reliable connections to at least 3-5 relays, with no “No connected relays” errors.
+Step 3: Fix Social Interactions
+Tasks:
+Update useNodusPosts.ts to handle posts, likes, and reposts using ndk-react hooks:
+javascript
+// client/src/hooks/useNodusPosts.ts
+import { useNDK, useSubscribe } from '@nostr-dev-kit/ndk-react';
+import { useState, useEffect } from 'react';
+import { NDKEvent } from '@nostr-dev-kit/ndk';
+
+export function useNodusPosts() {
+  const { ndk } = useNDK();
+  const [verifiedPosts, setVerifiedPosts] = useState([]);
+  const { events } = useSubscribe({
+    filter: { kinds: [1], limit: 50 },
+    enabled: !!ndk
+  });
+
+  useEffect(() => {
+    const filterPosts = async () => {
+      const verified = [];
+      for (const event of events) {
+        const user = await ndk.getUser({ pubkey: event.pubkey });
+        if (user.nip05) verified.push(event);
+      }
+      setVerifiedPosts(verified);
+    };
+    filterPosts();
+  }, [events, ndk]);
+
+  const createPost = async (content) => {
+    if (!ndk) throw new Error('NDK not initialized');
+    const event = new NDKEvent(ndk);
+    event.kind = 1;
+    event.content = content;
+    event.created_at = Math.floor(Date.now() / 1000);
+    await event.sign();
+    await ndk.publish(event);
+  };
+
+  const likePost = async (postId, pubkey) => {
+    if (!ndk) throw new Error('NDK not initialized');
+    const event = new NDKEvent(ndk);
+    event.kind = 7;
+    event.content = '+';
+    event.tags = [['e', postId], ['p', pubkey]];
+    await event.sign();
+    await ndk.publish(event);
+  };
+
+  const repostPost = async (postId, pubkey) => {
+    if (!ndk) throw new Error('NDK not initialized');
+    const event = new NDKEvent(ndk);
+    event.kind = 6;
+    event.tags = [['e', postId], ['p', pubkey]];
+    await event.sign();
+    await ndk.publish(event);
+  };
+
+  return { posts: verifiedPosts, createPost, likePost, repostPost };
+}
+Update ComposePost.tsx and PostCard.tsx:
+javascript
+// client/src/components/feed/ComposePost.tsx
+import { useNodusPosts } from '@/hooks/useNodusPosts';
+import { useState } from 'react';
+
+export const ComposePost = () => {
+  const { createPost } = useNodusPosts();
+  const [content, setContent] = useState('');
+
+  const handleSubmit = async () => {
+    try {
+      await createPost(content);
+      setContent('');
+    } catch (error) {
+      console.error('Failed to post:', error);
+    }
+  };
+
+  return (
+    <div>
+      <textarea value={content} onChange={e => setContent(e.target.value)} />
+      <button onClick={handleSubmit}>Post</button>
+    </div>
+  );
+};
+
+javascript
+// client/src/components/feed/PostCard.tsx
+import { useNodusPosts } from '@/hooks/useNodusPosts';
+
+export const PostCard = ({ post }) => {
+  const { likePost, repostPost } = useNodusPosts();
+
+  return (
+    <div>
+      <p>{post.content}</p>
+      <button onClick={() => likePost(post.id, post.pubkey)}>Like</button>
+      <button onClick={() => repostPost(post.id, post.pubkey)}>Repost</button>
+    </div>
+  );
+};
+Deliverable: Working post, like, and repost functionality with NIP-05 verified users.
+Step 4: Implement Basic Clustering
+Tasks:
+Tag relays with cluster metadata in NdkContext.tsx:
+javascript
+useEffect(() => {
+  if (ndk) {
+    ndk.pool.relays.forEach((relay, url) => {
+      relay.metadata = {
+        cluster: url === 'wss://relay.mynodus.com' ? 'city1' : 'neighborhood1',
+        isDoor: ['wss://relay.mynodus.com', 'wss://relay.damus.io'].includes(url)
+      };
+    });
+  }
+}, [ndk]);
+Modify useNodusPosts.ts to prioritize door relays for publishing:
+javascript
+const createPost = async (content) => {
+  if (!ndk) throw new Error('NDK not initialized');
+  const event = new NDKEvent(ndk);
+  event.kind = 1;
+  event.content = content;
+  event.created_at = Math.floor(Date.now() / 1000);
+  event.tags = [['cluster', 'city1']]; // Tag for routing
+  await event.sign();
+  const doorRelays = Array.from(ndk.pool.relays.values()).filter(r => r.metadata?.isDoor);
+  await Promise.all(doorRelays.map(r => r.publish(event)));
+};
+Deliverable: Basic clustering with door relay routing, testable in RelaySettings.tsx.
+Step 5: Fix TypeScript and Replit Issues
+Tasks:
+Resolve LSP errors in useNodusPosts.ts and other files:
+javascript
+// Add type annotations
+interface Post extends NDKEvent {
+  id: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+}
+Ensure WebSocket polyfill is loaded before NDK initialization:
+javascript
+// client/src/index.tsx
+import { WebSocket } from 'ws';
+global.WebSocket = WebSocket;
+Deliverable: Clean TypeScript build and stable Replit performance.
+

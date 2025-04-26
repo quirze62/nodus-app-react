@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useHybridNostr } from '@/hooks/useHybridNostr';
+import { useNdk } from '@/hooks/useNdk';
 import { formatDate } from '@/lib/utils';
 import { NostrEvent, NostrProfile, EventKind } from '@/lib/nostr';
 import logger from '@/lib/logger';
@@ -12,7 +12,7 @@ interface PostCardProps {
 
 export default function PostCard({ post, onReply }: PostCardProps) {
   const { user } = useAuth();
-  const { getProfile, createReaction, repostNote, getReactions, getReposts, getReplies } = useHybridNostr();
+  const { getProfile, createReaction, repostNote, getReactions, getReposts, getReplies } = useNdk();
   
   // State
   const [profile, setProfile] = useState<NostrProfile & { pubkey: string } | null>(null);
