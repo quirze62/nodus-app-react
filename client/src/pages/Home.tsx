@@ -9,11 +9,17 @@ import TrendingTopics from '@/components/widgets/TrendingTopics';
 import SuggestedUsers from '@/components/widgets/SuggestedUsers';
 import { NostrEvent } from '@/lib/nostr';
 import { Skeleton } from '@/components/ui/skeleton';
+import { FeedFiltersBar, DEFAULT_FILTERS, FeedFilters } from '@/components/feed/FeedFilters';
 
 export default function Home() {
   // Use our pure NDK implementation with subscription-based updates
-  const { posts, isLoading, error, createPost } = useNodusPosts(50);
+  const { posts, isLoading, error, createPost, filters, setFilters } = useNodusPosts(50);
   const { isOffline } = useOffline();
+  
+  // Handle filter changes
+  const handleFilterChange = (newFilters: FeedFilters) => {
+    setFilters(newFilters);
+  };
   
   // Display only authentic data from Nostr relays
   

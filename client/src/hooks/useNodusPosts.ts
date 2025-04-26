@@ -6,6 +6,7 @@ import logger from '../lib/logger';
 import { NostrEvent, EventKind } from '../lib/nostr';
 import { db } from '../lib/db';
 import { isNIP05Verified, isPersonallyApproved } from '../lib/ndk';
+import { FeedFilters, DEFAULT_FILTERS } from '@/components/feed/FeedFilters';
 
 // Helper function to check if a user is a valid Nodus network member
 async function isValidNodusMember(user: NDKUser): Promise<boolean> {
@@ -34,7 +35,8 @@ async function isValidNodusMember(user: NDKUser): Promise<boolean> {
 }
 
 // Hook for fetching and working with posts
-export function useNodusPosts(limit: number = 50) {
+export function useNodusPosts(limit: number = 50, initialFilters: Partial<FeedFilters> = {}) {
+  const [filters, setFilters] = useState<FeedFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
   const { ndk, user: ndkUser } = useNdk();
   const { user: authUser } = useAuth();
   const [posts, setPosts] = useState<NostrEvent[]>([]);
@@ -54,6 +56,57 @@ export function useNodusPosts(limit: number = 50) {
     closeOnEose: false
   };
   
+  // Function to apply filters to posts
+  const applyFilters = (posts: NostrEvent[]): NostrEvent[] => {
+    if (!posts || posts.length === 0) return [];
+    
+    return posts.filter(post => {
+      // Search term filter
+      if (filters.searchTerm) {
+        const term = filters.searchTerm.toLowerCase();
+        const content = post.content.toLowerCase();
+        if (!content.includes(term)) {
+          return false;
+        }
+      }
+      
+      // Tags filter
+      if (filters.tags.length > 0) {
+        const postTags = post.tags.filter(tag => tag[0] === 't').map(tag => tag[1]);
+        const hasMatchingTag = filters.tags.some(filterTag => 
+          postTags.includes(filterTag) || post.content.toLowerCase().includes(`#${filterTag.toLowerCase()}`)
+        );
+        
+        if (!hasMatchingTag) {
+          return false;
+        }
+      }
+      
+      // Reposts filter
+      if (!filters.includeReposts && post.kind === EventKind.REPOST) {
+        return false;
+      }
+      
+      // Mentions filter (approximation - looking for p tags)
+      if (!filters.includeMentions && post.tags.some(tag => tag[0] === 'p')) {
+        return false;
+      }
+      
+      // Filtering logic for followers will be implemented with NDK's follow lists
+      // For now, this is a placeholder that will need to be integrated with NDK's follow data
+      
+      return true;
+    });
+  };
+  
+  // Update filtered posts when filters change
+  useEffect(() => {
+    if (verifiedPosts.length > 0) {
+      const filtered = applyFilters(verifiedPosts);
+      setPosts(filtered);
+    }
+  }, [filters]);
+  
   // Set up subscription to posts
   useEffect(() => {
     if (!ndk) return;
@@ -61,12 +114,23 @@ export function useNodusPosts(limit: number = 50) {
     setIsLoading(true);
     logger.info(`Fetching up to ${limit} posts from Nostr network`);
     
+    // Additional filter parameters based on user selections
+    let ndkFilter: NDKFilter = {
+      kinds: [EventKind.TEXT_NOTE],
+      limit
+    };
+    
+    // For trending filter, we could fetch posts with a larger number of reactions
+    // This would require additional implementation with NDK
+    
     // Start with posts from database
     db.getEventsByKind(EventKind.TEXT_NOTE, limit)
       .then((dbEvents: NostrEvent[]) => {
         if (dbEvents.length > 0) {
           logger.info(`Loaded ${dbEvents.length} posts from local database`);
-          setPosts(dbEvents.sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at));
+          const sortedDbEvents = dbEvents.sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
+          setVerifiedPosts(sortedDbEvents);
+          setPosts(applyFilters(sortedDbEvents));
         }
       })
       .catch((err: Error) => {
@@ -75,7 +139,7 @@ export function useNodusPosts(limit: number = 50) {
       });
     
     // Create subscription
-    const subscription = ndk.subscribe(filter, options);
+    const subscription = ndk.subscribe(ndkFilter, options);
     const events: NostrEvent[] = [];
     
     // Handle events as they come in
@@ -110,8 +174,8 @@ export function useNodusPosts(limit: number = 50) {
               
               // Sort and update state
               const sortedEvents = [...events].sort((a: NostrEvent, b: NostrEvent) => b.created_at - a.created_at);
-              setPosts(sortedEvents);
               setVerifiedPosts(sortedEvents);
+              setPosts(applyFilters(sortedEvents));
             } else {
               logger.info(`Skipped post from user with NIP-05 but not in approved network: ${user.profile.nip05}`);
             }
@@ -460,6 +524,8 @@ export function useNodusPosts(limit: number = 50) {
     verifiedPosts,
     isLoading,
     error,
+    filters,
+    setFilters,
     createPost,
     likePost,
     repostPost,
