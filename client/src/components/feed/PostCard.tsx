@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNodusPosts } from '@/hooks/useNodusPosts';
+import { useNdk } from '@/hooks/useNdk';
 import { formatDate } from '@/lib/utils';
 import { NostrEvent, NostrProfile, EventKind } from '@/lib/nostr';
 import logger from '@/lib/logger';
@@ -29,38 +30,60 @@ export default function PostCard({ post, onReply }: PostCardProps) {
     reply: false
   });
   
+  const { 
+    getProfile, 
+    getReactions, 
+    getReposts, 
+    getReplies 
+  } = useNdk();
+
   // Load profile and interaction counts
   useEffect(() => {
     const loadData = async () => {
       try {
-        // For now, we'll use a simplified approach for post metadata
-        // In a production app, you would implement fetchProfile, getReactions, etc.
+        setIsLoading(true);
         
-        // Simulate profile data based on post data
-        setProfile({
-          pubkey: post.pubkey,
-          name: post.tags?.find(tag => tag[0] === 'name')?.[1] || `User ${post.pubkey.substring(0, 6)}`,
-          nip05: post.tags?.find(tag => tag[0] === 'nip05')?.[1] || undefined,
-          picture: post.tags?.find(tag => tag[0] === 'picture')?.[1] 
-        });
+        // Load profile data
+        const profileData = await getProfile(post.pubkey);
+        if (profileData) {
+          setProfile(profileData);
+        } else {
+          // Fallback to basic profile from post tags
+          setProfile({
+            pubkey: post.pubkey,
+            name: post.tags?.find(tag => tag[0] === 'name')?.[1] || `User ${post.pubkey.substring(0, 6)}`,
+            nip05: post.tags?.find(tag => tag[0] === 'nip05')?.[1] || '',
+            picture: post.tags?.find(tag => tag[0] === 'picture')?.[1] || '',
+            about: ''
+          });
+        }
         
-        // Set placeholder counts 
-        // In a real implementation, you would fetch these from the network
-        setLikeCount(0);
-        setRepostCount(0);
-        setCommentCount(0);
-        setHasLiked(false);
-        setHasReposted(false);
+        // Load reactions (likes)
+        const reactions = await getReactions(post.id);
+        setLikeCount(reactions.length);
+        setHasLiked(reactions.some(r => r.pubkey === user?.publicKey));
+        
+        // Load reposts
+        const reposts = await getReposts(post.id);
+        setRepostCount(reposts.length);
+        setHasReposted(reposts.some(r => r.pubkey === user?.publicKey));
+        
+        // Load replies
+        const replies = await getReplies(post.id);
+        setCommentCount(replies.length);
         
       } catch (error) {
         console.error('Error loading post data:', error);
+        logger.error(`Error loading data for post ${post.id}`, error);
       } finally {
         setIsLoading(false);
       }
     };
     
-    loadData();
-  }, [post.id, post.pubkey, post.tags]);
+    if (post.id && post.pubkey) {
+      loadData();
+    }
+  }, [post.id, post.pubkey, post.tags, getProfile, getReactions, getReposts, getReplies, user?.publicKey]);
   
   // Handle like
   const handleLike = async () => {
@@ -274,10 +297,97 @@ export default function PostCard({ post, onReply }: PostCardProps) {
               </button>
             </div>
             
-            {/* Reply form would go here - we'll implement this as a separate component later */}
+            {/* Reply form */}
+            {showReplyForm && (
+              <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex space-x-3">
+                  <img 
+                    className="h-8 w-8 rounded-full" 
+                    src={`https://avatar.vercel.sh/${user?.publicKey?.substring(0, 8) || "user"}`}
+                    alt="Your avatar" 
+                  />
+                  <div className="flex-1">
+                    <CommentForm 
+                      postId={post.id}
+                      postPubkey={post.pubkey}
+                      rootId={post.tags?.find(tag => tag[0] === 'e' && tag[3] === 'root')?.[1] || post.id}
+                      onSuccess={() => {
+                        setShowReplyForm(false);
+                        setCommentCount(prev => prev + 1);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
     </div>
+  );
+}
+
+// Sub-component for comment form
+interface CommentFormProps {
+  postId: string;
+  postPubkey: string;
+  rootId?: string;
+  onSuccess: () => void;
+}
+
+function CommentForm({ postId, postPubkey, rootId, onSuccess }: CommentFormProps) {
+  const [content, setContent] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { replyToPost } = useNodusPosts();
+  const { createReaction, replyToNote } = useNdk();
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!content.trim()) return;
+    
+    setIsSubmitting(true);
+    
+    try {
+      // Use the replyToPost from useNodusPosts which handles database storage too
+      const reply = await replyToPost(postId, postPubkey, rootId, content);
+      
+      if (reply) {
+        setContent('');
+        onSuccess();
+        logger.info(`Successfully replied to post: ${postId}`);
+      } else {
+        logger.error('Failed to create reply - no event returned');
+      }
+    } catch (error) {
+      logger.error('Error submitting reply:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+  
+  return (
+    <form onSubmit={handleSubmit}>
+      <textarea
+        className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg 
+                 bg-white dark:bg-gray-700 text-gray-900 dark:text-white 
+                 focus:ring-primary focus:border-primary dark:focus:ring-primary-light dark:focus:border-primary-light"
+        rows={2}
+        placeholder="Write your reply..."
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        disabled={isSubmitting}
+      />
+      <div className="mt-2 flex justify-end">
+        <button
+          type="submit"
+          className="px-4 py-1 text-sm bg-primary hover:bg-blue-600 dark:bg-primary-light dark:hover:bg-blue-500 
+                   text-white font-medium rounded-lg"
+          disabled={isSubmitting || !content.trim()}
+        >
+          {isSubmitting ? 'Sending...' : 'Reply'}
+        </button>
+      </div>
+    </form>
   );
 }
